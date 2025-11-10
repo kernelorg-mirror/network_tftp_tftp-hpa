@@ -163,9 +163,9 @@ remapping below.  This option may not be compiled in, see the output of
 .B "in.tftpd \-V"
 to verify whether or not it is available.
 .TP
-.\fB\-\-map-steps\fP \fIsteps\fP
+\fB\-\-map-steps\fP \fIsteps\fP
 Specify the number of remapping rules that may be executed before the
-filename mapping fails. The default is 4096.
+filename mapping fails.  The default is 4096.
 .TP
 \fB\-\-verbose\fP, \fB\-v\fP
 Increase the logging verbosity of

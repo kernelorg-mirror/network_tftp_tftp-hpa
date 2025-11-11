@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *
  *
- *   Copyright 2001 H. Peter Anvin - All Rights Reserved
+ *   Copyright 2001-2025 H. Peter Anvin - All Rights Reserved
  *
  *   This program is free software available under the same license
  *   as the "OpenBSD" operating system, distributed at
@@ -20,6 +20,8 @@
 void set_signal(int, void (*)(int), int);
 void *tfmalloc(size_t);
 char *tfstrdup(const char *);
+void *tfrealloc(void *, size_t);
+void tffree(void *);
 
 extern int verbosity;
 

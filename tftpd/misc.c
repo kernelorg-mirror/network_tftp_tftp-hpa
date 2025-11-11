@@ -31,13 +31,13 @@ void set_signal(int signum, sighandler_t handler, int flags)
 
 /*
  * malloc() that syslogs an error message and bails if it fails.
+ * Actually uses calloc() to emphasize safety.
  */
 void *tfmalloc(size_t size)
 {
-    void *p = malloc(size);
-
+    void *p = calloc(1, size);
     if (!p) {
-        syslog(LOG_ERR, "malloc: %m");
+        syslog(LOG_ERR, "calloc: %m");
         exit(EX_OSERR);
     }
 
@@ -45,16 +45,44 @@ void *tfmalloc(size_t size)
 }
 
 /*
- * strdup() that does the equivalent
+ * realloc() equivalent, which NULL check in case of bugs
+ */
+void *tfrealloc(void *ptr, size_t size)
+{
+    void *p;
+
+    if (!ptr)
+        p = malloc(size);
+    else
+        p = realloc(ptr, size);
+
+    if (!p) {
+        syslog(LOG_ERR, "realloc: %m");
+        exit(EX_OSERR);
+    }
+
+    return p;
+}
+
+/*
+ * strdup() equivalent
  */
 char *tfstrdup(const char *str)
 {
     char *p = strdup(str);
-
     if (!p) {
         syslog(LOG_ERR, "strdup: %m");
         exit(EX_OSERR);
     }
 
     return p;
+}
+
+/*
+ * free() which explicitly checks for NULL, just in case of bugs
+ */
+void tffree(void *ptr)
+{
+    if (ptr)
+        free(ptr);
 }

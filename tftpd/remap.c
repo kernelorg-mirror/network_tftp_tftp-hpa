@@ -23,7 +23,6 @@
 #include "remap.h"
 
 #define DEADMAN_MAX_STEPS	4096    /* Timeout after this many steps */
-#define MAXLINE			16384   /* Truncate a line at this many bytes */
 
 #define RULE_REWRITE	0x01    /* This is a rewrite rule */
 #define RULE_GLOBAL	0x02    /* Global rule (repeat until no match) */
@@ -43,7 +42,7 @@ int deadman_max_steps = DEADMAN_MAX_STEPS;
 
 struct rule {
     struct rule *next;
-    int nrule;
+    unsigned int line;
     unsigned int rule_flags;
     regex_t rx;
     const char *pattern;
@@ -225,17 +224,19 @@ static int readescstring(char *buf, char **str)
     return len;
 }
 
-/* Parse a line into a set of instructions */
-static int parseline(char *line, struct rule *r, int lineno)
+/*
+ * Parse a line into a set of instructions. Needs a work buffer
+ * no shorter than the length of the line including final \0.
+ */
+static int parseline(char *line, struct rule *r, unsigned int lineno,
+                     char *buffer)
 {
-    char buffer[MAXLINE];
     char *p;
     int rv;
     int rxflags = REG_EXTENDED;
-    static int nrule;
 
     memset(r, 0, sizeof *r);
-    r->nrule = nrule;
+    r->line = lineno;
 
     if (!readescstring(buffer, &line))
         return 0;               /* No rule found */
@@ -283,7 +284,7 @@ static int parseline(char *line, struct rule *r, int lineno)
             break;
         default:
             syslog(LOG_ERR,
-                   "Remap command \"%s\" on line %d contains invalid char \"%c\"",
+                   "Remap command \"%s\" on line %u contains invalid char \"%c\"",
                    buffer, lineno, *p);
             return -1;          /* Error */
             break;
@@ -292,7 +293,7 @@ static int parseline(char *line, struct rule *r, int lineno)
 
     if (r->rule_flags & RULE_REWRITE) {
         if (r->rule_flags & RULE_INVERSE) {
-            syslog(LOG_ERR, "r rules cannot be inverted, line %d: %s\n",
+            syslog(LOG_ERR, "r rules cannot be inverted, line %u: %s\n",
                    lineno, line);
             return -1;              /* Error */
         }
@@ -303,14 +304,14 @@ static int parseline(char *line, struct rule *r, int lineno)
 
     /* Read and compile the regex */
     if (!readescstring(buffer, &line)) {
-        syslog(LOG_ERR, "No regex on remap line %d: %s\n", lineno, line);
+        syslog(LOG_ERR, "No regex on remap line %u: %s\n", lineno, line);
         return -1;              /* Error */
     }
 
     if ((rv = regcomp(&r->rx, buffer, rxflags)) != 0) {
         char errbuf[BUFSIZ];
         regerror(rv, &r->rx, errbuf, BUFSIZ);
-        syslog(LOG_ERR, "Bad regex in remap line %d: %s\n", lineno,
+        syslog(LOG_ERR, "Bad regex in remap line %u: %s\n", lineno,
                errbuf);
         return -1;              /* Error */
     }
@@ -322,23 +323,64 @@ static int parseline(char *line, struct rule *r, int lineno)
         r->pattern = "";
     }
 
-    nrule++;
     return 1;                   /* Rule found */
+}
+
+#define MIN_LINE	64      /* Minimum size of allocated buffer */
+
+/* Read a line into an allocated buffer; drops \n \r \0 */
+static size_t read_line(FILE *f, char **bufp, size_t *bufsizep)
+{
+    char *buf = *bufp;
+    size_t bufsize = *bufsizep;
+    size_t len = 0;
+
+    while (1) {
+        int c = 0;
+
+        while (len+1 < bufsize) {
+            c = getc(f);
+
+            if (c == EOF) {
+                buf[len] = '\0';
+                return len ? len : (size_t)-1;
+            } else if (c == '\n') {
+                buf[len] = '\0';
+                return len;
+            } else if (c != '\0' && c != '\r') {
+                buf[len++] = c;
+            }
+        }
+
+        if (bufsize < MIN_LINE)
+            bufsize = MIN_LINE;
+        else
+            bufsize <<= 1;
+        *bufsizep = bufsize;
+        *bufp = buf = tfrealloc(buf, bufsize);
+    }
 }
 
 /* Read a rule file */
 struct rule *parserulefile(FILE * f)
 {
-    char line[MAXLINE];
+    char *line = NULL;
+    char *parsebuf = NULL;
+    size_t linesize = 0;
+    size_t parsebufsize = 0;
     struct rule *first_rule = NULL;
     struct rule **last_rule = &first_rule;
     struct rule *this_rule = tfmalloc(sizeof(struct rule));
     int rv;
-    int lineno = 0;
+    unsigned int lineno = 0;
+    size_t len;
     int err = 0;
 
-    while (lineno++, fgets(line, MAXLINE, f)) {
-        rv = parseline(line, this_rule, lineno);
+    while ((len = read_line(f, &line, &linesize)) != (size_t)-1) {
+        lineno++;
+        if (parsebufsize < linesize)
+            parsebuf = tfrealloc(parsebuf, parsebufsize = linesize);
+        rv = parseline(line, this_rule, lineno, parsebuf);
         if (rv < 0)
             err = 1;
         if (rv > 0) {
@@ -348,7 +390,9 @@ struct rule *parserulefile(FILE * f)
         }
     }
 
-    free(this_rule);            /* Last one is always unused */
+    tffree(this_rule);          /* Last one is always unused */
+    tffree(parsebuf);
+    tffree(line);               /* Free buffer */
 
     if (err) {
         /* Bail on error, we have already logged an error message */
@@ -437,8 +481,8 @@ char *rewrite_string(const struct formats *pf,
 
         if (ruleptr->rule_flags & RULE_ABORT) {
             if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: rule %d: abort: %s",
-                       ruleptr->nrule, current);
+                syslog(LOG_INFO, "remap: line %u: abort: %s",
+                       ruleptr->line, current);
             }
             if (ruleptr->pattern[0]) {
                 /* Custom error message */
@@ -464,8 +508,8 @@ char *rewrite_string(const struct formats *pf,
                                      pmatch, macrosub, ggoffset, &ggoffset);
 
                 if (verbosity >= 4) {
-                    syslog(LOG_INFO, "remap: rule %d: rewrite step: %s -> %s",
-                           ruleptr->nrule, newstr, newerstr);
+                    syslog(LOG_INFO, "remap: line %u: rewrite step: %s -> %s",
+                           ruleptr->line, newstr, newerstr);
                 }
 
                 if (newstr != current)
@@ -492,8 +536,8 @@ char *rewrite_string(const struct formats *pf,
         if ((ruleptr->rule_flags & RULE_HASFILE) &&
             pf->f_validate(newstr, mode, pf, &accerr)) {
             if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: rule %d: ignoring %s (%s)",
-                       ruleptr->nrule, whatami, accerr);
+                syslog(LOG_INFO, "remap: line %u: ignoring %s (%s)",
+                       ruleptr->line, whatami, accerr);
             }
             was_match = 0;
             if (newstr != current)
@@ -502,8 +546,8 @@ char *rewrite_string(const struct formats *pf,
             free(current);
             current = newstr;
             if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: rule %d: rewrite: %s",
-                       ruleptr->nrule, current);
+                syslog(LOG_INFO, "remap: line %u: rewrite: %s",
+                       ruleptr->line, current);
             }
         }
 
@@ -512,14 +556,14 @@ char *rewrite_string(const struct formats *pf,
 
         if (ruleptr->rule_flags & (RULE_EXIT|RULE_HASFILE)) {
                 if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: rule %d: exit",
-                       ruleptr->nrule);
+                syslog(LOG_INFO, "remap: line %u: exit",
+                       ruleptr->line);
             }
             return current; /* Exit here, we're done */
         } else if (ruleptr->rule_flags & RULE_RESTART) {
             if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: rule %d: restart",
-                       ruleptr->nrule);
+                syslog(LOG_INFO, "remap: line %u: restart",
+                       ruleptr->line);
             }
             ruleptr = rules;        /* Start from the top */
             continue;               /* Don't advance rule pointer */

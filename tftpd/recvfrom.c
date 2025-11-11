@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *
  *
- *   Copyright 2001-2006 H. Peter Anvin - All Rights Reserved
+ *   Copyright 2001-2025 H. Peter Anvin - All Rights Reserved
  *
  *   This program is free software available under the same license
  *   as the "OpenBSD" operating system, distributed at
@@ -172,17 +172,14 @@ myrecvfrom(int s, void *buf, int len, unsigned int flags,
 
     /* Try to enable getting the return address */
 #ifdef IP_RECVDSTADDR
-    if (from->sa.sa_family == AF_INET)
-        setsockopt(s, IPPROTO_IP, IP_RECVDSTADDR, &on, sizeof(on));
+    setsockopt(s, IPPROTO_IP, IP_RECVDSTADDR, &on, sizeof(on));
 #endif
 #ifdef IP_PKTINFO
-    if (from->sa.sa_family == AF_INET)
-        setsockopt(s, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on));
+    setsockopt(s, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on));
 #endif
 #ifdef HAVE_IPV6
 #ifdef IPV6_RECVPKTINFO
-    if (from->sa.sa_family == AF_INET6)
-        setsockopt(s, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on));
+    setsockopt(s, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on));
 #endif
 #endif
     bzero(&msg, sizeof msg);    /* Clear possible system-dependent fields */

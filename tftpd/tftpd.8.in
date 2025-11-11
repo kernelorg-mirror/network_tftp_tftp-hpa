@@ -274,11 +274,13 @@ by the
 The replacement pattern may contain escape sequences; see below.
 .TP
 .B g
-Repeat this rule until it no longer matches. This is always used with
+Repeat the replacement until it no longer matches, searching the whole
+string, including replacements, from the beginning each time. This is
+always used with
 .BR r .
 .TP
 .B gg
-Repeat this rule until it no longer matches, but only on the portion
+Repeat the replacement until it no longer matches, but only on the portion
 of the string that has not yet been matched, similar to how the
 .B s
 command with the
@@ -302,10 +304,7 @@ If this rule matches,
 end rule processing after executing the rule. If this is combined with
 .BR r ,
 then if the substitution does \fInot\fP result in a valid filename,
-the substitution is undone. This cannot be combined with
-.BR g ,
-but \fIcan\fP be combined with
-.BR gg .
+the substitution is undone.
 .TP
 .B s
 If this rule matches, start rule processing over from the very first

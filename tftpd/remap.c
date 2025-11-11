@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *
  *
- *   Copyright 2001-2024 H. Peter Anvin - All Rights Reserved
+ *   Copyright 2001-2025 H. Peter Anvin - All Rights Reserved
  *
  *   This program is free software available under the same license
  *   as the "OpenBSD" operating system, distributed at
@@ -173,7 +173,6 @@ static int do_genmatchstring(char *string, const char *pattern,
 /*
  * Ditto, but allocate the string in a new buffer
  */
-
 static int genmatchstring(char **string, const char *pattern,
                           const char *ibuf,
                           const regmatch_t * pmatch,
@@ -297,12 +296,6 @@ static int parseline(char *line, struct rule *r, int lineno)
                    lineno, line);
             return -1;              /* Error */
         }
-        if ((r->rule_flags & (RULE_GLOBAL|RULE_SEDG|RULE_HASFILE))
-            == (RULE_GLOBAL|RULE_HASFILE)) {
-            syslog(LOG_ERR, "E rules cannot be combined with g (but gg is OK), line %d: %s\n",
-                   lineno, line);
-            return -1;              /* Error */
-        }
     } else {
         /* RULE_GLOBAL and RULE_SEDG are meaningless without RULE_REWRITE */
         r->rule_flags &= ~(RULE_GLOBAL|RULE_SEDG);
@@ -392,18 +385,16 @@ char *rewrite_string(const struct formats *pf,
                      const char **errmsg)
 {
     char *current = tfstrdup(input);
-    char *newstr, *newerstr;
+    char *newstr = current;
     const char *accerr;
     const struct rule *ruleptr = rules;
     regmatch_t pmatch[10];
     int i;
     int len;
-    int was_match = 0;
     int deadman = deadman_max_steps;
     int matchsense;
     int pmatches;
     unsigned int bad_flags;
-    int ggoffset;
 
     /* Default error */
     *errmsg = "Remap table failure";
@@ -418,9 +409,13 @@ char *rewrite_string(const struct formats *pf,
     if (af != AF_INET)  bad_flags |= RULE_IPV4;
     if (af != AF_INET6) bad_flags |= RULE_IPV6;
 
-    for (ruleptr = rules; ruleptr; ruleptr = ruleptr->next) {
+    ruleptr = rules;
+    while (ruleptr) {
+        int was_match;
+        const char *whatami;
+
         if (ruleptr->rule_flags & bad_flags)
-            continue;		/* This rule is excluded by flags */
+            goto nextrule;
 
         matchsense = ruleptr->rule_flags & RULE_INVERSE ? REG_NOMATCH : 0;
         pmatches = ruleptr->rule_flags & RULE_INVERSE ? 0 : 10;
@@ -429,106 +424,109 @@ char *rewrite_string(const struct formats *pf,
         for (i = 0; i < 10; i++)
             pmatch[i].rm_so = pmatch[i].rm_eo = -1;
 
-        was_match = 0;
+        if (!deadman--)
+            goto dead;
 
-        do {
-            if (!deadman--)
-                goto dead;
+        newstr = current;
+        was_match = regexec(&ruleptr->rx, current, pmatches, pmatch, 0)
+            == matchsense;
+        if (!was_match)
+            continue;           /* No match on this rule */
 
-            if (regexec(&ruleptr->rx, current, pmatches, pmatch, 0)
-                != matchsense)
-                break;          /* No match, break out of do loop */
+        whatami = "match";
 
-            /* Match on this rule */
-            was_match = 1;
-
-            if (ruleptr->rule_flags & RULE_ABORT) {
-                if (verbosity >= 3) {
-                    syslog(LOG_INFO, "remap: rule %d: abort: %s",
-                           ruleptr->nrule, current);
-                }
-                if (ruleptr->pattern[0]) {
-                    /* Custom error message */
-                    genmatchstring(&newstr, ruleptr->pattern, current,
-                                   pmatch, macrosub, 0, NULL);
-                    *errmsg = newstr;
-                } else {
-                    *errmsg = NULL;
-                }
-                free(current);
-                return (NULL);
+        if (ruleptr->rule_flags & RULE_ABORT) {
+            if (verbosity >= 3) {
+                syslog(LOG_INFO, "remap: rule %d: abort: %s",
+                       ruleptr->nrule, current);
             }
+            if (ruleptr->pattern[0]) {
+                /* Custom error message */
+                genmatchstring(&newstr, ruleptr->pattern, current,
+                               pmatch, macrosub, 0, NULL);
+                *errmsg = newstr;
+            } else {
+                *errmsg = NULL;
+            }
+            free(current);
+            return NULL;
+        }
 
-            if (ruleptr->rule_flags & RULE_REWRITE) {
-                len = genmatchstring(&newstr, ruleptr->pattern, current,
-                                     pmatch, macrosub, 0, &ggoffset);
+        if (ruleptr->rule_flags & RULE_REWRITE) {
+            int ggoffset = 0;
 
-                if (ruleptr->rule_flags & RULE_SEDG) {
-                    /* sed-style partial-matching global */
-                    while (ggoffset < len &&
-                           regexec(&ruleptr->rx, newstr + ggoffset,
-                                   pmatches, pmatch,
-                                   ggoffset ? REG_NOTBOL : 0)
-                           == matchsense) {
-                        if (!deadman--) {
-                            free(current);
-                            current = newstr;
-                            goto dead;
-                        }
-                        len = genmatchstring(&newerstr, ruleptr->pattern,
-                                             newstr, pmatch, macrosub,
-                                             ggoffset, &ggoffset);
-                        free(newstr);
-                        newstr = newerstr;
-                    }
+            whatami = "rewrite";
+
+            while (1) {
+                char *newerstr;
+
+                len = genmatchstring(&newerstr, ruleptr->pattern, newstr,
+                                     pmatch, macrosub, ggoffset, &ggoffset);
+
+                if (verbosity >= 4) {
+                    syslog(LOG_INFO, "remap: rule %d: rewrite step: %s -> %s",
+                           ruleptr->nrule, newstr, newerstr);
                 }
 
-                if ((ruleptr->rule_flags & RULE_HASFILE) &&
-                    pf->f_validate(newstr, mode, pf, &accerr)) {
-                    if (verbosity >= 3) {
-                        syslog(LOG_INFO, "remap: rule %d: ignored rewrite (%s): %s",
-                               ruleptr->nrule, accerr, newstr);
-                    }
+                if (newstr != current)
                     free(newstr);
-                    was_match = 0;
-                    break;
-                }
+                newstr = newerstr;
 
-                free(current);
-                current = newstr;
-                if (verbosity >= 3) {
-                    syslog(LOG_INFO, "remap: rule %d: rewrite: %s",
-                           ruleptr->nrule, current);
-                }
-            } else if (ruleptr->rule_flags & RULE_HASFILE) {
-                if (pf->f_validate(current, mode, pf, &accerr)) {
-                    if (verbosity >= 3) {
-                        syslog(LOG_INFO, "remap: rule %d: not exiting (%s)\n",
-                               ruleptr->nrule, accerr);
-                    }
-                    was_match = 0;
+                if (!(ruleptr->rule_flags & RULE_GLOBAL))
                     break;
-                }
+
+                if (!(ruleptr->rule_flags & RULE_SEDG))
+                    ggoffset = 0;
+                else if (ggoffset >= len)
+                    break;
+
+                if (regexec(&ruleptr->rx, newstr + ggoffset, pmatches,
+                            pmatch, ggoffset ? REG_NOTBOL : 0) != matchsense)
+                    break;
+
+                if (!deadman--)
+                    goto dead;
             }
-            /* If the rule is (old-style) global, keep going until no match */
-        } while ((ruleptr->rule_flags & (RULE_GLOBAL|RULE_SEDG)) == RULE_GLOBAL);
+        }
+
+        if ((ruleptr->rule_flags & RULE_HASFILE) &&
+            pf->f_validate(newstr, mode, pf, &accerr)) {
+            if (verbosity >= 3) {
+                syslog(LOG_INFO, "remap: rule %d: ignoring %s (%s)",
+                       ruleptr->nrule, whatami, accerr);
+            }
+            was_match = 0;
+            if (newstr != current)
+                free(newstr);
+        } else if (newstr != current) {
+            free(current);
+            current = newstr;
+            if (verbosity >= 3) {
+                syslog(LOG_INFO, "remap: rule %d: rewrite: %s",
+                       ruleptr->nrule, current);
+            }
+        }
 
         if (!was_match)
-            continue;           /* Next rule */
+            goto nextrule;
 
         if (ruleptr->rule_flags & (RULE_EXIT|RULE_HASFILE)) {
-            if (verbosity >= 3) {
+                if (verbosity >= 3) {
                 syslog(LOG_INFO, "remap: rule %d: exit",
                        ruleptr->nrule);
             }
             return current; /* Exit here, we're done */
         } else if (ruleptr->rule_flags & RULE_RESTART) {
-            ruleptr = rules;        /* Start from the top */
             if (verbosity >= 3) {
                 syslog(LOG_INFO, "remap: rule %d: restart",
                        ruleptr->nrule);
             }
+            ruleptr = rules;        /* Start from the top */
+            continue;               /* Don't advance rule pointer */
         }
+
+    nextrule:
+        ruleptr = ruleptr->next;
     }
 
     if (verbosity >= 3) {
@@ -539,7 +537,9 @@ char *rewrite_string(const struct formats *pf,
 dead:                           /* Deadman expired */
     syslog(LOG_ERR,
            "remap: Breaking loop after %d steps, input = %s, last = %s",
-           deadman_max_steps, input, current);
+           deadman_max_steps, input, newstr);
+    if (newstr != current)
+        free(newstr);
     free(current);
     return NULL;        /* Did not terminate! */
 }

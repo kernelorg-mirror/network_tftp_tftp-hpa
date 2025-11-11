@@ -230,7 +230,8 @@ PA_ARG_DISABLED([ipv6],
  [AC_MSG_RESULT(disabled)],
  [AS_IF([test x"$ac_cv_member_struct_sockaddr_in6_sin6_addr$ac_cv_member_struct_addrinfo_ai_addr" = xyesyes],
  [AC_MSG_RESULT(yes)
-  AC_DEFINE(HAVE_IPV6, 1, [define if IPv6 support is enabled])],
+  AC_DEFINE(HAVE_IPV6, 1, [define if IPv6 support is enabled])
+  AC_CHECK_MEMBERS(struct in6_pktinfo.ipi6_addr)],
  [AC_MSG_RESULT(no)
   AC_MSG_WARN([*** we do not have required IPv6 structs - IPv6 will be disabled])])])
 

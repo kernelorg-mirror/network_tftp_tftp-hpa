@@ -24,7 +24,7 @@
 #include <machine/param.h>      /* Needed on some versions of FreeBSD */
 #endif
 
-#if defined(HAVE_RECVMSG) && defined(HAVE_MSGHDR_MSG_CONTROL)
+#if defined(HAVE_RECVMSG) && defined(HAVE_STRUCT_MSGHDR_MSG_CONTROL)
 
 #ifdef HAVE_SYS_UIO_H
 # include <sys/uio.h>
@@ -154,7 +154,7 @@ myrecvfrom(int s, void *buf, int len, unsigned int flags,
         char control[CMSG_SPACE(sizeof(struct in_addr))];
 #endif
 #ifdef HAVE_IPV6
-#ifdef HAVE_STRUCT_IN6_PKTINFO
+#ifdef HAVE_STRUCT_IN6_PKTINFO_IPI6_ADDR
         char control6[CMSG_SPACE(sizeof(struct in6_addr)) +
                      CMSG_SPACE(sizeof(struct in6_pktinfo))];
 #else
@@ -166,7 +166,7 @@ myrecvfrom(int s, void *buf, int len, unsigned int flags,
 #ifdef IP_PKTINFO
     struct in_pktinfo pktinfo;
 #endif
-#ifdef HAVE_STRUCT_IN6_PKTINFO
+#ifdef HAVE_STRUCT_IN6_PKTINFO_IPI6_ADDR
     struct in6_pktinfo pktinfo6;
 #endif
 
@@ -241,7 +241,7 @@ myrecvfrom(int s, void *buf, int len, unsigned int flags,
                            sizeof(struct in6_addr));
 #endif
 
-#ifdef HAVE_STRUCT_IN6_PKTINFO
+#ifdef HAVE_STRUCT_IN6_PKTINFO_IPI6_ADDR
                 if (cmptr->cmsg_level == IPPROTO_IPV6 &&
 		    (
 #ifdef IPV6_RECVPKTINFO

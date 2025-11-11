@@ -1,6 +1,6 @@
 /* -*- c -*- ------------------------------------------------------------- *
  *
- *   Copyright 2001-2024 H. Peter Anvin - All Rights Reserved
+ *   Copyright 2001-2025 H. Peter Anvin - All Rights Reserved
  *
  *   This program is free software available under the same license
  *   as the "OpenBSD" operating system, distributed at
@@ -290,7 +290,7 @@ int daemon(int, int);
 #endif
 
 #ifndef HAVE_GETADDRINFO
-#ifndef HAVE_STRUCT_ADDRINFO
+#ifndef HAVE_STRUCT_ADDRINFO_AI_ADDR
 struct addrinfo {
     int     ai_flags;
     int     ai_family;

@@ -201,34 +201,6 @@ static int lock_file(int fd, int lock_write)
 #endif
 }
 
-static void set_socket_nonblock(int fd, int flag)
-{
-    int err;
-    int flags;
-#if defined(HAVE_FCNTL) && defined(HAVE_O_NONBLOCK_DEFINITION)
-    /* Posixly correct */
-    err = ((flags = fcntl(fd, F_GETFL, 0)) < 0) ||
-        (fcntl
-         (fd, F_SETFL,
-          flag ? flags | O_NONBLOCK : flags & ~O_NONBLOCK) < 0);
-#else
-    flags = flag ? 1 : 0;
-    err = (ioctl(fd, FIONBIO, &flags) < 0);
-#endif
-    if (err) {
-        syslog(LOG_ERR, "Cannot set nonblock flag on socket: %m");
-        exit(EX_OSERR);
-    }
-}
-
-static void pmtu_discovery_off(int fd)
-{
-#if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DONT)
-    int pmtu = IP_PMTUDISC_DONT;
-
-    setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtu, sizeof(pmtu));
-#endif
-}
 
 /*
  * Receive packet with synchronous timeout; timeout is adjusted
@@ -270,10 +242,15 @@ static int recv_time(int s, void *rbuf, int len, unsigned int flags,
             return -1;
         }
 
+#ifdef MSG_DONTWAIT
+        rv = recv(s, rbuf, len, flags | MSG_DONTWAIT);
+        err = errno;
+#else
         set_socket_nonblock(s, 1);
         rv = recv(s, rbuf, len, flags);
         err = errno;
         set_socket_nonblock(s, 0);
+#endif
 
         if (rv < 0) {
             if (E_WOULD_BLOCK(err) || err == EINTR) {
@@ -576,9 +553,7 @@ int main(int argc, char **argv)
                 syslog(LOG_ERR, "cannot open IPv4 socket: %m");
                 exit(EX_OSERR);
             }
-#ifndef __CYGWIN__
-            set_socket_nonblock(fd4, 1);
-#endif
+            tftpd_config_socket(fd4, 0);
             memset(&bindaddr4, 0, sizeof bindaddr4);
             bindaddr4.sin_family = AF_INET;
             bindaddr4.sin_addr.s_addr = INADDR_ANY;
@@ -596,9 +571,7 @@ int main(int argc, char **argv)
                            "cannot open IPv6 socket, disable IPv6: %m");
                 }
             }
-#ifndef __CYGWIN__
-            set_socket_nonblock(fd6, 1);
-#endif
+            tftpd_config_socket(fd6, 0);
             memset(&bindaddr6, 0, sizeof bindaddr6);
             bindaddr6.sin6_family = AF_INET6;
             bindaddr6.sin6_port = htons(IPPORT_TFTP);
@@ -777,15 +750,8 @@ int main(int argc, char **argv)
         close(2);
         fd = 0;
         fdmax = 0;
-        /* Note: on Cygwin, select() on a nonblocking socket becomes
-           a nonblocking select. */
-#ifndef __CYGWIN__
-        set_socket_nonblock(fd, 1);
-#endif
+        tftpd_config_socket(fd, 0);
     }
-
-    /* Disable path MTU discovery */
-    pmtu_discovery_off(fd);
 
     /* This means we don't want to wait() for children */
 #ifdef SA_NOCLDWAIT
@@ -835,28 +801,16 @@ int main(int argc, char **argv)
         if (standalone) {
             if (fd4 >= 0) {
                 FD_SET(fd4, &readset);
-#ifdef __CYGWIN__
-                /* On Cygwin, select() on a nonblocking socket returns
-                   immediately, with a rv of 0! */
-                set_socket_nonblock(fd4, 0);
-#endif
+                cygwin_set_socket_nonblock(fd4, 0);
             }
             if (fd6 >= 0) {
                 FD_SET(fd6, &readset);
-#ifdef __CYGWIN__
-                /* On Cygwin, select() on a nonblocking socket returns
-                   immediately, with a rv of 0! */
-                set_socket_nonblock(fd6, 0);
-#endif
+                cygwin_set_socket_nonblock(fd6, 0);
             }
         } else { /* fd always 0 */
             fd = 0;
-#ifdef __CYGWIN__
-            /* On Cygwin, select() on a nonblocking socket returns
-               immediately, with a rv of 0! */
-            set_socket_nonblock(fd, 0);
-#endif
             FD_SET(fd, &readset);
+            cygwin_set_socket_nonblock(fd, 0);
         }
         tv_waittime.tv_sec = waittime;
         tv_waittime.tv_usec = 0;
@@ -883,12 +837,8 @@ int main(int argc, char **argv)
             else /* not in set ??? */
                 continue;
         }
-#ifdef __CYGWIN__
-        /* On Cygwin, select() on a nonblocking socket returns
-           immediately, with a rv of 0! */
-        set_socket_nonblock(fd, 0);
-#endif
 
+        cygwin_set_socket_nonblock(fd, 1);
         n = myrecvfrom(fd, buf, sizeof(buf), 0, &from, &myaddr);
 
         if (n < 0) {
@@ -899,6 +849,7 @@ int main(int argc, char **argv)
                 exit(EX_IOERR);
             }
         }
+
 #ifdef HAVE_IPV6
         if ((from.sa.sa_family != AF_INET) && (from.sa.sa_family != AF_INET6)) {
             syslog(LOG_ERR, "received address was not AF_INET/AF_INET6,"
@@ -1065,8 +1016,7 @@ int main(int argc, char **argv)
         exit(EX_IOERR);
     }
 
-    /* Disable path MTU discovery */
-    pmtu_discovery_off(peer);
+    tftpd_config_socket(peer, 1);
 
     tp = (struct tftphdr *)buf;
     tp_opcode = ntohs(tp->th_opcode);
@@ -1381,12 +1331,12 @@ static void do_opt(const char *opt, const char *val, char **ap)
  * as \i.  It should write the output in "output" if non-NULL, and
  * return the length of the output (generated or not).
  *
- * Return -1 on failure.
+ * Return (size_t)-1 on failure.
  */
-static int rewrite_macros(char macro, char *output)
+static size_t rewrite_macros(char macro, char *output)
 {
     char *p, tb[INET6_ADDRSTRLEN];
-    int l=0;
+    size_t l = 0;
 
     switch (macro) {
     case 'i':

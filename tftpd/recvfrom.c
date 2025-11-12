@@ -24,6 +24,8 @@
 #include <machine/param.h>      /* Needed on some versions of FreeBSD */
 #endif
 
+#include <syslog.h>
+
 #if defined(HAVE_RECVMSG) && defined(HAVE_STRUCT_MSGHDR_MSG_CONTROL)
 
 #ifdef HAVE_SYS_UIO_H
@@ -137,6 +139,90 @@ static void normalize_ip6_compat(union sock_addr *myaddr)
 #endif
 }
 
+void set_socket_nonblock(int fd, int flag)
+{
+    int flags;
+
+#if defined(HAVE_FCNTL) && (O_NONBLOCK != 0)
+    /* Posixly correct */
+    flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+        goto err;
+
+    if (flag)
+        flags |= O_NONBLOCK;
+    else
+        flags &= ~O_NONBLOCK;
+
+    if (fcntl(fd, F_SETFL, flags) < 0)
+        goto err;
+#else
+    flags = flag ? 1 : 0;
+    if (ioctl(fd, FIONBIO, &flags) < 0)
+        goto err;
+#endif
+    return;
+
+err:
+        syslog(LOG_ERR, "Cannot set nonblock flag on socket: %m");
+        exit(EX_OSERR);
+}
+
+/* Disable pmtu discovery */
+static void pmtu_discovery_off(int fd)
+{
+#if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DONT)
+    int pmtu = IP_PMTUDISC_DONT;
+
+    setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtu, sizeof(pmtu));
+#endif
+}
+
+/* Try to enable getting the receive address in recvmsg() */
+static void enable_recvdstaddr(int fd)
+{
+    int on = 1;
+    (void)on;
+
+#ifdef IP_RECVDSTADDR
+    setsockopt(fd, IPPROTO_IP, IP_RECVDSTADDR, &on, sizeof(on));
+#endif
+#ifdef IP_PKTINFO
+    setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on));
+#endif
+#ifdef HAVE_IPV6
+#ifdef IPV6_RECVPKTINFO
+    setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on));
+#endif
+#endif
+}
+
+/*
+ * Configure a socket for myrecvfrom(). It should also be suitable
+ * for select().
+ *
+ * The "peer" flag indicates that this a connected peer socket.
+ */
+void tftpd_config_socket(int fd, int peer)
+{
+    /* Set socket as nonblocking */
+#ifdef __CYGWIN__
+    /* On Cygwin, a nonblocking socket returns immediately from select()! */
+    set_socket_nonblock(fd, 0);
+#else
+    set_socket_nonblock(fd, 1);
+#endif
+
+    /* Disable pmtu discovery (useless for TFTP and breaks things) */
+    pmtu_discovery_off(fd);
+
+    /* Get our own address in recvmsg()*/
+    if (!peer)
+        enable_recvdstaddr(fd);
+}
+
+#ifdef HAVE_RECVMSG
+
 int
 myrecvfrom(int s, void *buf, int len, unsigned int flags,
            union sock_addr *from, union sock_addr *myaddr)
@@ -162,7 +248,6 @@ myrecvfrom(int s, void *buf, int len, unsigned int flags,
 #endif
 #endif
     } control_un;
-    int on = 1;
 #ifdef IP_PKTINFO
     struct in_pktinfo pktinfo;
 #endif
@@ -170,17 +255,6 @@ myrecvfrom(int s, void *buf, int len, unsigned int flags,
     struct in6_pktinfo pktinfo6;
 #endif
 
-    /* Try to enable getting the return address */
-#ifdef IP_RECVDSTADDR
-    setsockopt(s, IPPROTO_IP, IP_RECVDSTADDR, &on, sizeof(on));
-#endif
-#ifdef IP_PKTINFO
-    setsockopt(s, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on));
-#endif
-#ifdef HAVE_IPV6
-#ifdef IPV6_RECVPKTINFO
-    setsockopt(s, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on));
-#endif
 #endif
     bzero(&msg, sizeof msg);    /* Clear possible system-dependent fields */
     msg.msg_control = control_un.control;
@@ -233,7 +307,7 @@ myrecvfrom(int s, void *buf, int len, unsigned int flags,
                 myaddr->sa.sa_family = AF_INET6;
 #ifdef IP6_RECVDSTADDR
                 if (cmptr->cmsg_level == IPPROTO_IPV6 &&
-                    cmptr->cmsg_type == IPV6_RECVDSTADDR )
+                    cmptr->cmsg_type == IPV6_RECVDSTADDR)
                     memcpy(&myaddr->s6.sin6_addr, CMSG_DATA(cmptr),
                            sizeof(struct in6_addr));
 #endif

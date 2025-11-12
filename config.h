@@ -122,6 +122,14 @@
 #define O_BINARY	0
 #endif
 
+#ifndef HAVE_DECL_O_NONBLOCK
+# ifdef HAVE_DECL_O_NDELAY
+#  define O_NONBLOCK	O_NDELAY
+# else
+#  define O_NONBLOCK	0
+# endif
+#endif
+
 /* If we don't have intmax_t, try creating it */
 
 #ifndef HAVE_INTMAX_T

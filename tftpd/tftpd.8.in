@@ -246,12 +246,16 @@ The
 option specifies a file which contains filename remapping rules.  Each
 non-comment line (comments begin with hash marks,
 .BR # )
-contains an
+contains either a label, preceeded by a colon:
+.IP
+\fB:\fP\fIlabel\fP
+.PP
+or an
 .IR operation ,
-specified below; a
-.IR regex ,
-a regular expression in the style of
-.BR egrep ;
+specified below, followed by a
+.I regex
+(an extended regular expression in the style of
+.MR egrep 1 ),
 and optionally a
 .IR "replacement pattern" .
 The operation indicated by
@@ -262,9 +266,16 @@ matches all or part of the filename.  Rules are processed from the top
 down, and by default, all rules are processed even if there is a
 match.
 .PP
+Sometimes it is useful to have a rule that \fIalways\fP matches, in
+that case, the regular expression:
+.IP
+.B ^
+.PP
+(a single caret symbol) can be used.
+.PP
 The
 .I operation
-can be any combination of the following letters:
+can be any valid combination of the following characters:
 .TP
 .B r
 Replace the substring matched by
@@ -272,12 +283,14 @@ Replace the substring matched by
 by the
 .IR "replacement pattern" .
 The replacement pattern may contain escape sequences; see below.
+.br
+\fBr\fP cannot be used with \fB~\fP, \fBa\fP, or \fBj\fP.
 .TP
 .B g
 Repeat the replacement until it no longer matches, searching the whole
-string, including replacements, from the beginning each time. This is
-always used with
-.BR r .
+string, including replacements, from the beginning each time.
+.br
+\fBg\fP is always used with \fBr\fP.
 .TP
 .B gg
 Repeat the replacement until it no longer matches, but only on the portion
@@ -286,9 +299,9 @@ of the string that has not yet been matched, similar to how the
 command with the
 .B g
 option works in
-.BR sed (1).
-This is always used with
-.BR r .
+.MR sed 1 .
+.br
+\fBgg\fP is always used with \fBr\fP.
 .TP
 .B i
 Match the
@@ -297,22 +310,34 @@ case-insensitively.  By default it is case sensitive.
 .TP
 .B e
 If this rule matches, end rule processing after executing the rule.
+.br
+\fBe\fP cannot be used with \fBa\fP, \fBE\fP, \fBj\fP, or \fBs\fP.
 .TP
 .B E
 If this rule matches,
 \fIand the result matches a filename that can be transferred\fP,
-end rule processing after executing the rule. If this is combined with
+end rule processing after executing the rule. If this is used with
 .BR r ,
 then if the substitution does \fInot\fP result in a valid filename,
 the substitution is undone.
+.br
+\fBE\fP cannot be used with \fBa\fP, \fBe\fP, \fBj\fP, or \fBs\fP.
 .TP
 .B s
 If this rule matches, start rule processing over from the very first
 rule after executing this rule.
+.br
+\fBs\fP cannot be used with \fBa\fP, \fBe\fP, \fBE\fP, or \fBj\fP.
 .TP
 .B a
 If this rule matches, refuse the request and send an access denied
 error to the client.
+.br
+\fBa\fP cannot be used with \fBe\fP, \fBE\fP, \fBj\fP, \fBr\fP, or
+\fBs\fP.
+.TP
+.B j
+If this rule matches, jump to the label specified by \fIreplacement pattern\fP.
 .TP
 .B G
 This rule applies to GET (RRQ) requests only.
@@ -332,8 +357,9 @@ Inverse the sense of this rule, i.e. execute the
 only if the
 .I regex
 .I doesn't
-match.  Cannot used together with
-.BR r .
+match.
+.br
+\fB~\fP cannot be used with \fBr\fP.
 .PP
 The following escape sequences are recognized as part of a
 .IR "replacement pattern" :
@@ -448,9 +474,9 @@ is maintained by H. Peter Anvin <hpa@zytor.com>.  It was derived from,
 but has substantially diverged from, an OpenBSD source base, with
 added patches by Markus Gutschke and Gero Kulhman.
 .SH "SEE ALSO"
-.BR tftp (1),
-.BR egrep (1),
-.BR umask (2),
-.BR hosts_access (5),
-.BR regex (7),
-.BR inetd (8).
+.MR tftp 1 ,
+.MR egrep 1 ,
+.MR umask 2 ,
+.MR hosts_access 5 ,
+.MR regex 7 ,
+.MR inetd 8 .

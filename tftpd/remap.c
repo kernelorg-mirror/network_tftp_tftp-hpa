@@ -38,6 +38,12 @@
 #define RULE_WRQ	0x400	/* Put (write) only */
 #define RULE_SEDG	0x800   /* sed-style global */
 
+#define RULE_JUMP	0x1000  /* Jump rule */
+#define RULE_LABEL	0x2000  /* Label */
+#define RULE_NOREGEX	0x4000  /* The rule has no regular expression */
+
+#define RULE_HAS_REGEX(x) (!((x) & RULE_NOREGEX))
+
 int deadman_max_steps = DEADMAN_MAX_STEPS;
 
 struct rule {
@@ -45,7 +51,7 @@ struct rule {
     unsigned int line;
     unsigned int rule_flags;
     regex_t rx;
-    const char *pattern;
+    const char *pattern;        /* Replacement pattern or label name */
 };
 
 static int xform_null(int c)
@@ -66,27 +72,36 @@ static int xform_tolower(int c)
 /*
  * Do \-substitution.  Call with string == NULL to get length only.
  * "start" indicates an offset into the input buffer where the pattern
- * match was started.
+ * match was started; *nextp points to the first character after the
+ * pattern expansion.
+ *
+ * If start is set to MATCHONLY == (size_t)-1 or the pmatch array indicates
+ * that no match was found, then the before and after match contents of
+ * the input string are discarded.
  */
-static int do_genmatchstring(char *string, const char *pattern,
-                             const char *ibuf,
-                             const regmatch_t * pmatch,
-                             match_pattern_callback macrosub,
-                             int start, int *nextp)
+#define MATCHONLY ((size_t)-1)
+
+static size_t do_genmatchstring(char *string, const char *pattern,
+                                const char *ibuf, const regmatch_t *pmatch,
+                                match_pattern_callback macrosub,
+                                size_t start, size_t *nextp)
 {
     int (*xform) (int) = xform_null;
-    int len = 0;
-    int n, mlen, sublen;
-    int endbytes;
+    size_t len, endbytes;
+    size_t n, mlen, sublen;
     const char *input = ibuf + start;
 
-    /* Get section before match; note pmatch[0] is the whole match */
-    endbytes = strlen(input) - pmatch[0].rm_eo;
-    len = start + pmatch[0].rm_so;
-    if (string) {
-        /* Copy the prefix before "start" as well! */
-        memcpy(string, ibuf, start + pmatch[0].rm_so);
-        string += start + pmatch[0].rm_so;
+    if (start == MATCHONLY || pmatch[0].rm_so == -1) {
+        endbytes = 0;
+        len = 0;
+    } else {
+        endbytes = strlen(input) - pmatch[0].rm_eo;
+        len = start + pmatch[0].rm_so;
+        if (string) {
+            /* Copy the prefix before match start, including before "start" */
+            memcpy(string, ibuf, len);
+            string += len;
+        }
     }
 
     /* Transform matched section */
@@ -132,7 +147,8 @@ static int do_genmatchstring(char *string, const char *pattern,
                 break;
 
             default:
-                if (macrosub && (sublen = macrosub(macro, string)) >= 0) {
+                if (macrosub &&
+                    (sublen = macrosub(macro, string)) != (size_t)-1) {
                     while (sublen--) {
                         len++;
                         if (string) {
@@ -172,13 +188,13 @@ static int do_genmatchstring(char *string, const char *pattern,
 /*
  * Ditto, but allocate the string in a new buffer
  */
-static int genmatchstring(char **string, const char *pattern,
-                          const char *ibuf,
-                          const regmatch_t * pmatch,
-                          match_pattern_callback macrosub,
-                          int start, int *nextp)
+static size_t genmatchstring(char **string, const char *pattern,
+                             const char *ibuf,
+                             const regmatch_t * pmatch,
+                             match_pattern_callback macrosub,
+                             size_t start, size_t *nextp)
 {
-    int len;
+    size_t len;
     char *buf;
 
     len = do_genmatchstring(NULL, pattern, ibuf, pmatch,
@@ -193,10 +209,11 @@ static int genmatchstring(char **string, const char *pattern,
  * leading whitespace.  Consider an unescaped # to be a comment marker,
  * functionally \n.
  */
-static int readescstring(char *buf, char **str)
+static size_t readescstring(char *buf, char **str)
 {
     char *p = *str;
-    int wasbs = 0, len = 0;
+    int wasbs = 0;
+    size_t len = 0;
 
     while (*p && isspace(*p))
         p++;
@@ -234,6 +251,26 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
     char *p;
     int rv;
     int rxflags = REG_EXTENDED;
+    struct badcombo {
+        unsigned int flags;
+        char name[4];
+    };
+    static const struct badcombo badcombos[] = {
+        { RULE_REWRITE | RULE_INVERSE, "r~" },
+        { RULE_REWRITE | RULE_ABORT,   "ra" },
+        { RULE_REWRITE | RULE_JUMP,    "rj" },
+        { RULE_ABORT | RULE_JUMP,      "aj" },
+        { RULE_ABORT | RULE_RESTART,   "as" },
+        { RULE_EXIT | RULE_JUMP,       "ej" },
+        { RULE_EXIT | RULE_ABORT,      "ae" },
+        { RULE_EXIT | RULE_RESTART,    "es" },
+        { RULE_EXIT | RULE_HASFILE,    "eE" },
+        { RULE_HASFILE | RULE_JUMP,    "Ej" },
+        { RULE_HASFILE | RULE_ABORT,   "aE" },
+        { RULE_HASFILE | RULE_RESTART, "Es" },
+        { 0, "" }
+    };
+    const struct badcombo *bc;
 
     memset(r, 0, sizeof *r);
     r->line = lineno;
@@ -241,7 +278,18 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
     if (!readescstring(buffer, &line))
         return 0;               /* No rule found */
 
-    for (p = buffer; *p; p++) {
+    p = buffer;
+    if (*buffer == ':') {
+        /* It is a label */
+        r->rule_flags = RULE_LABEL | RULE_NOREGEX;
+        p++;
+        if (*p) {
+            r->pattern = tfstrdup(p);
+            return 1;
+        }
+    }
+
+    for (; *p; p++) {
         switch (*p) {
         case 'r':
             r->rule_flags |= RULE_REWRITE;
@@ -264,6 +312,9 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
         case 'a':
             r->rule_flags |= RULE_ABORT;
             break;
+        case 'j':
+            r->rule_flags |= RULE_JUMP;
+            break;
         case 'i':
             rxflags |= REG_ICASE;
             break;
@@ -284,46 +335,49 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
             break;
         default:
             syslog(LOG_ERR,
-                   "Remap command \"%s\" on line %u contains invalid char \"%c\"",
-                   buffer, lineno, *p);
+                   "remap rule contains invalid flag \"%c\", line %u: %s",
+                   *p, lineno, line);
             return -1;          /* Error */
             break;
         }
     }
 
-    if (r->rule_flags & RULE_REWRITE) {
-        if (r->rule_flags & RULE_INVERSE) {
-            syslog(LOG_ERR, "r rules cannot be inverted, line %u: %s\n",
-                   lineno, line);
-            return -1;              /* Error */
+    for (bc = badcombos; bc->flags; bc++) {
+        if ((r->rule_flags & bc->flags) == bc->flags) {
+            syslog(LOG_ERR, "rule flags %c and %c cannot be combined, line %u: %s",
+                   bc->name[0], bc->name[1], lineno, line);
+            return -1;
         }
-    } else {
+    }
+
+    if (!(r->rule_flags & RULE_REWRITE)) {
         /* RULE_GLOBAL and RULE_SEDG are meaningless without RULE_REWRITE */
         r->rule_flags &= ~(RULE_GLOBAL|RULE_SEDG);
     }
 
-    /* Read and compile the regex */
-    if (!readescstring(buffer, &line)) {
-        syslog(LOG_ERR, "No regex on remap line %u: %s\n", lineno, line);
-        return -1;              /* Error */
-    }
+    if (RULE_HAS_REGEX(r->rule_flags)) {
+        /* Read and compile the regex */
+        if (!readescstring(buffer, &line)) {
+            syslog(LOG_ERR, "no regex on remap, line %u: %s", lineno, line);
+            return -1;              /* Error */
+        }
 
-    if ((rv = regcomp(&r->rx, buffer, rxflags)) != 0) {
-        char errbuf[BUFSIZ];
-        regerror(rv, &r->rx, errbuf, BUFSIZ);
-        syslog(LOG_ERR, "Bad regex in remap line %u: %s\n", lineno,
-               errbuf);
-        return -1;              /* Error */
+        if ((rv = regcomp(&r->rx, buffer, rxflags)) != 0) {
+            char *errbuf = tfmalloc(BUFSIZ);
+            regerror(rv, &r->rx, errbuf, BUFSIZ);
+            syslog(LOG_ERR, "bad regex in remap, line %u: %s",
+                   lineno, errbuf);
+            return -1;              /* Error */
+        }
     }
 
     /* Read the rewrite pattern, if any */
-    if (readescstring(buffer, &line)) {
+    if (readescstring(buffer, &line))
         r->pattern = tfstrdup(buffer);
-    } else {
-        r->pattern = "";
-    }
+    else
+        r->pattern = tfstrdup("");
 
-    return 1;                   /* Rule found */
+    return 1;                   /* Valid rule found */
 }
 
 #define MIN_LINE	64      /* Minimum size of allocated buffer */
@@ -410,13 +464,11 @@ void freerules(struct rule *r)
     while (r) {
         next = r->next;
 
-        regfree(&r->rx);
+        if (RULE_HAS_REGEX(r->rule_flags))
+            regfree(&r->rx);
 
-        /* "" patterns aren't allocated by malloc() */
-        if (r->pattern && *r->pattern)
-            free((void *)r->pattern);
-
-        free(r);
+        tffree((void *)r->pattern);
+        tffree(r);
 
         r = next;
     }
@@ -434,7 +486,6 @@ char *rewrite_string(const struct formats *pf,
     const struct rule *ruleptr = rules;
     regmatch_t pmatch[10];
     int i;
-    int len;
     int deadman = deadman_max_steps;
     int matchsense;
     int pmatches;
@@ -447,7 +498,7 @@ char *rewrite_string(const struct formats *pf,
         syslog(LOG_INFO, "remap: input: %s", current);
     }
 
-    bad_flags = 0;
+    bad_flags = RULE_LABEL | RULE_NOREGEX;
     if (mode != RRQ)    bad_flags |= RULE_RRQ;
     if (mode != WRQ)    bad_flags |= RULE_WRQ;
     if (af != AF_INET)  bad_flags |= RULE_IPV4;
@@ -457,6 +508,7 @@ char *rewrite_string(const struct formats *pf,
     while (ruleptr) {
         int was_match;
         const char *whatami;
+        const struct rule *next = ruleptr->next;
 
         if (ruleptr->rule_flags & bad_flags)
             goto nextrule;
@@ -475,34 +527,18 @@ char *rewrite_string(const struct formats *pf,
         was_match = regexec(&ruleptr->rx, current, pmatches, pmatch, 0)
             == matchsense;
         if (!was_match)
-            continue;           /* No match on this rule */
+            goto nextrule;      /* Rule did not match */
 
         whatami = "match";
 
-        if (ruleptr->rule_flags & RULE_ABORT) {
-            if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: line %u: abort: %s",
-                       ruleptr->line, current);
-            }
-            if (ruleptr->pattern[0]) {
-                /* Custom error message */
-                genmatchstring(&newstr, ruleptr->pattern, current,
-                               pmatch, macrosub, 0, NULL);
-                *errmsg = newstr;
-            } else {
-                *errmsg = NULL;
-            }
-            free(current);
-            return NULL;
-        }
-
         if (ruleptr->rule_flags & RULE_REWRITE) {
-            int ggoffset = 0;
+            size_t ggoffset = 0;
 
             whatami = "rewrite";
 
             while (1) {
                 char *newerstr;
+                size_t len;
 
                 len = genmatchstring(&newerstr, ruleptr->pattern, newstr,
                                      pmatch, macrosub, ggoffset, &ggoffset);
@@ -513,7 +549,7 @@ char *rewrite_string(const struct formats *pf,
                 }
 
                 if (newstr != current)
-                    free(newstr);
+                    tffree(newstr);
                 newstr = newerstr;
 
                 if (!(ruleptr->rule_flags & RULE_GLOBAL))
@@ -540,13 +576,15 @@ char *rewrite_string(const struct formats *pf,
                        ruleptr->line, whatami, accerr);
             }
             was_match = 0;
-            if (newstr != current)
-                free(newstr);
+            if (newstr != current) {
+                tffree(newstr);
+                newstr = current;
+            }
         } else if (newstr != current) {
-            free(current);
+            tffree(current);
             current = newstr;
             if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: line %u: rewrite: %s",
+                syslog(LOG_INFO, "remap: line %u: rewrite result: %s",
                        ruleptr->line, current);
             }
         }
@@ -554,23 +592,70 @@ char *rewrite_string(const struct formats *pf,
         if (!was_match)
             goto nextrule;
 
+        newstr = NULL;
+        if (ruleptr->rule_flags & (RULE_ABORT|RULE_JUMP)) {
+            genmatchstring(&newstr, ruleptr->pattern, current,
+                           pmatch, macrosub, MATCHONLY, NULL);
+            if (!newstr[0]) {
+                tffree(newstr);
+                newstr = NULL;
+            }
+        }
+
+        if (ruleptr->rule_flags & RULE_ABORT) {
+            if (verbosity >= 3) {
+                syslog(LOG_INFO, "remap: line %u: abort: %s",
+                       ruleptr->line, current);
+            }
+
+            *errmsg = newstr;
+            newstr = NULL;
+            goto quit;
+        }
+
         if (ruleptr->rule_flags & (RULE_EXIT|RULE_HASFILE)) {
                 if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: line %u: exit",
-                       ruleptr->line);
+                    syslog(LOG_INFO, "remap: line %u: exit",
+                           ruleptr->line);
             }
             return current; /* Exit here, we're done */
-        } else if (ruleptr->rule_flags & RULE_RESTART) {
-            if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: line %u: restart",
+        }
+
+        if (ruleptr->rule_flags & RULE_RESTART) {
+            next = rules;
+        } else if (ruleptr->rule_flags & RULE_JUMP) {
+            if (!newstr) {
+                syslog(LOG_ERR, "remap: line %u: no label in j rule",
                        ruleptr->line);
+                goto quit;
             }
-            ruleptr = rules;        /* Start from the top */
-            continue;               /* Don't advance rule pointer */
+
+            for (next = rules; next; next++) {
+                if ((next->rule_flags & RULE_LABEL) &&
+                    !strcmp(newstr, next->pattern))
+                    break;
+            }
+            if (!next) {
+                syslog(LOG_ERR, "remap: line %u: label not found: %s",
+                       ruleptr->line, newstr);
+                goto quit;
+            }
+        }
+
+        if (verbosity >= 3) {
+            if (next != ruleptr->next) {
+                if ((next->rule_flags & RULE_LABEL) && next->pattern[0]) {
+                    syslog(LOG_INFO, "remap: line %u: jump to %s",
+                           ruleptr->line, next->pattern);
+                } else {
+                    syslog(LOG_INFO, "remap: line %u: jump to line %u",
+                           ruleptr->line, next->line);
+                }
+            }
         }
 
     nextrule:
-        ruleptr = ruleptr->next;
+        ruleptr = next;
     }
 
     if (verbosity >= 3) {
@@ -582,8 +667,9 @@ dead:                           /* Deadman expired */
     syslog(LOG_ERR,
            "remap: Breaking loop after %d steps, input = %s, last = %s",
            deadman_max_steps, input, newstr);
+quit:
     if (newstr != current)
-        free(newstr);
-    free(current);
+        tffree(newstr);
+    tffree(current);
     return NULL;        /* Did not terminate! */
 }

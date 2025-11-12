@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *
  *
- *   Copyright 2001-2007 H. Peter Anvin - All Rights Reserved
+ *   Copyright 2001-2025 H. Peter Anvin - All Rights Reserved
  *
  *   This program is free software available under the same license
  *   as the "OpenBSD" operating system, distributed at
@@ -25,8 +25,8 @@ struct rule;
 /* This is called when we encounter a substitution like \i.  The
    macro character is passed as the first argument; the output buffer,
    if any, is passed as the second argument.  The function should return
-   the number of characters output, or -1 on failure. */
-typedef int (*match_pattern_callback) (char, char *);
+   the number of characters output, or (size_t)-1 on failure. */
+typedef size_t (*match_pattern_callback) (char, char *);
 
 /* Read a rule file */
 struct rule *parserulefile(FILE *);

@@ -24,7 +24,7 @@
 #include <machine/param.h>      /* Needed on some versions of FreeBSD */
 #endif
 
-#include <syslog.h>
+#include "tftpd.h"
 
 #if defined(HAVE_RECVMSG) && defined(HAVE_STRUCT_MSGHDR_MSG_CONTROL)
 
@@ -164,7 +164,7 @@ void set_socket_nonblock(int fd, int flag)
     return;
 
 err:
-        syslog(LOG_ERR, "Cannot set nonblock flag on socket: %m");
+        tftpd_log(LOG_ERR, "Cannot set nonblock flag on socket: %m");
         exit(EX_OSERR);
 }
 

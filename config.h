@@ -35,6 +35,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <limits.h>
+#include <stdarg.h>
 
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>

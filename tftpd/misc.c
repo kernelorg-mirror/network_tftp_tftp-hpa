@@ -14,8 +14,6 @@
  * Minor help routines.
  */
 
-#include "config.h"             /* Must be included first! */
-#include <syslog.h>
 #include "tftpd.h"
 
 /*
@@ -24,7 +22,7 @@
 void set_signal(int signum, sighandler_t handler, int flags)
 {
     if (tftp_signal(signum, handler, flags)) {
-        syslog(LOG_ERR, "sigaction: %m");
+        tftpd_log(LOG_ERR, "sigaction: %m");
         exit(EX_OSERR);
     }
 }
@@ -37,7 +35,7 @@ void *tfmalloc(size_t size)
 {
     void *p = calloc(1, size);
     if (!p) {
-        syslog(LOG_ERR, "calloc: %m");
+        tftpd_log(LOG_ERR, "calloc: %m");
         exit(EX_OSERR);
     }
 
@@ -57,7 +55,7 @@ void *tfrealloc(void *ptr, size_t size)
         p = realloc(ptr, size);
 
     if (!p) {
-        syslog(LOG_ERR, "realloc: %m");
+        tftpd_log(LOG_ERR, "realloc: %m");
         exit(EX_OSERR);
     }
 
@@ -71,7 +69,7 @@ char *tfstrdup(const char *str)
 {
     char *p = strdup(str);
     if (!p) {
-        syslog(LOG_ERR, "strdup: %m");
+        tftpd_log(LOG_ERR, "strdup: %m");
         exit(EX_OSERR);
     }
 

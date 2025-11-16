@@ -108,6 +108,7 @@ int verbosity = 0;
 
 #ifdef WITH_REGEX
 static struct rule *rewrite_rules = NULL;
+static void rewrite_test(FILE *);
 #endif
 
 static FILE *file;
@@ -162,6 +163,49 @@ static void timer(int sig)
     siglongjmp(timeoutbuf, 1);
 }
 
+static const char *prio_name(int priority)
+{
+    switch (priority) {
+    case LOG_EMERG:
+        return "emergency: ";
+    case LOG_ALERT:
+        return "alert: ";
+    case LOG_CRIT:
+        return "critical: ";
+    case LOG_ERR:
+        return "error: ";
+    case LOG_WARNING:
+        return "warning: ";
+    case LOG_NOTICE:
+        return "notice: ";
+    case LOG_INFO:
+        return "info: ";
+    case LOG_DEBUG:
+        return "debug: ";
+    default:
+        return "";
+    }
+}
+
+static void tftpd_log_stderr(int priority, const char *fmt, ...)
+{
+    va_list ap;
+
+    fputs(prio_name(priority), stderr);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    putc('\n', stderr);
+}
+
+log_func tftpd_log = tftpd_log_stderr;
+
+static void tftpd_openlog(const char *ident, int option, int facility)
+{
+    openlog(ident, option, facility);
+    tftpd_log = syslog;
+}
+
 #ifdef WITH_REGEX
 static struct rule *read_remap_rules(const char *rulefile)
 {
@@ -170,7 +214,7 @@ static struct rule *read_remap_rules(const char *rulefile)
 
     f = fopen(rulefile, "rt");
     if (!f) {
-        syslog(LOG_ERR, "Cannot open map file: %s: %m", rulefile);
+        tftpd_log(LOG_ERR, "Cannot open map file: %s: %m", rulefile);
         exit(EX_NOINPUT);
     }
     rulep = parserulefile(f);
@@ -302,6 +346,8 @@ static int split_port(char **ap, char **pp)
 
 enum long_only_options {
     OPT_VERBOSITY	= 256,
+    OPT_STDERR,
+    OPT_MAP_TEST,
     OPT_MAP_STEPS
 };
 
@@ -327,6 +373,8 @@ static struct option long_options[] = {
     { "map-file",    1, NULL, 'm' },
     { "map-steps",   1, NULL, OPT_MAP_STEPS },
     { "pidfile",     1, NULL, 'P' },
+    { "stderr",      0, NULL, OPT_STDERR },
+    { "map-test",    1, NULL, OPT_MAP_TEST },
     { NULL, 0, NULL, 0 }
 };
 static const char short_options[] = "46cspvVlLa:B:u:U:r:t:T:R:m:P:";
@@ -359,6 +407,8 @@ int main(int argc, char **argv)
     int waittime = 900;         /* Default time to wait for a connect */
     const char *user = "nobody";        /* Default user */
     char *p, *ep;
+    int use_stderr = 0;
+    const char *map_test_file = NULL;
 #ifdef WITH_REGEX
     char *rewrite_file = NULL;
 #endif
@@ -373,8 +423,6 @@ int main(int argc, char **argv)
 
     p = strrchr(argv[0], '/');
     tftpd_progname = (p && p[1]) ? p + 1 : argv[0];
-
-    openlog(tftpd_progname, LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
     srand(time(NULL) ^ getpid());
 
@@ -417,7 +465,7 @@ int main(int argc, char **argv)
                 char *vp;
                 max_blksize = (unsigned int)strtoul(optarg, &vp, 10);
                 if (max_blksize < 512 || max_blksize > MAX_SEGSIZE || *vp) {
-                    syslog(LOG_ERR,
+                    tftpd_log(LOG_ERR,
                            "Bad maximum blocksize value (range 512-%d): %s",
                            MAX_SEGSIZE, optarg);
                     exit(EX_USAGE);
@@ -429,7 +477,7 @@ int main(int argc, char **argv)
                 char *vp;
                 unsigned long tov = strtoul(optarg, &vp, 10);
                 if (tov < 10000UL || tov > 255000000UL || *vp) {
-                    syslog(LOG_ERR, "Bad timeout value: %s", optarg);
+                    tftpd_log(LOG_ERR, "Bad timeout value: %s", optarg);
                     exit(EX_USAGE);
                 }
                 rexmtval = timeout = tov;
@@ -441,7 +489,7 @@ int main(int argc, char **argv)
                 if (sscanf(optarg, "%u:%u", &portrange_from, &portrange_to)
                     != 2 || portrange_from > portrange_to
                     || portrange_to >= 65535) {
-                    syslog(LOG_ERR, "Bad port range: %s", optarg);
+                    tftpd_log(LOG_ERR, "Bad port range: %s", optarg);
                     exit(EX_USAGE);
                 }
                 portrange = 1;
@@ -453,7 +501,7 @@ int main(int argc, char **argv)
         case 'U':
             my_umask = strtoul(optarg, &ep, 8);
             if (*ep) {
-                syslog(LOG_ERR, "Invalid umask: %s", optarg);
+                tftpd_log(LOG_ERR, "Invalid umask: %s", optarg);
                 exit(EX_USAGE);
             }
             spec_umask = 1;
@@ -466,14 +514,14 @@ int main(int argc, char **argv)
                 }
             }
             if (!opt->o_opt) {
-                syslog(LOG_ERR, "Unknown option: %s", optarg);
+                tftpd_log(LOG_ERR, "Unknown option: %s", optarg);
                 exit(EX_USAGE);
             }
             break;
 #ifdef WITH_REGEX
         case 'm':
             if (rewrite_file) {
-                syslog(LOG_ERR, "Multiple -m options");
+                tftpd_log(LOG_ERR, "Multiple -m options");
                 exit(EX_USAGE);
             }
             rewrite_file = optarg;
@@ -484,17 +532,24 @@ int main(int argc, char **argv)
             if (*optarg && *ep && steps > 0 && steps <= INT_MAX) {
                 deadman_max_steps = steps;
             } else {
-                syslog(LOG_ERR, "Bad --map-steps option: %s", optarg);
+                tftpd_log(LOG_ERR, "Bad --map-steps option: %s", optarg);
                 exit(EX_USAGE);
             }
             break;
         }
+        case OPT_MAP_TEST:
+            map_test_file = optarg;
+            use_stderr = 1;
+            break;
 #endif
         case 'v':
             verbosity++;
             break;
         case OPT_VERBOSITY:
             verbosity = atoi(optarg);
+            break;
+        case OPT_STDERR:
+            use_stderr = 1;
             break;
         case 'V':
             /* Print configuration to stdout and exit */
@@ -505,9 +560,29 @@ int main(int argc, char **argv)
             pidfile = optarg;
             break;
         default:
-            syslog(LOG_ERR, "Unknown option: '%c'", optopt);
+            tftpd_log(LOG_ERR, "Unknown option: '%c'", optopt);
             break;
         }
+
+    if (!use_stderr)
+        tftpd_openlog(tftpd_progname, LOG_PID | LOG_NDELAY, LOG_DAEMON);
+
+#ifdef WITH_REGEX
+    if (rewrite_file)
+        rewrite_rules = read_remap_rules(rewrite_file);
+
+    if (map_test_file) {
+        FILE *tf = fopen(map_test_file, "r");
+        if (!tf) {
+            tftpd_log(LOG_ERR, "%s: cannot open map test file: %m",
+                      map_test_file);
+            exit(EX_NOINPUT);
+        }
+        rewrite_test(tf);
+        fclose(tf);
+        exit(0);
+    }
+#endif
 
     dirs = xmalloc((argc - optind + 1) * sizeof(char *));
     for (ndirs = 0; optind != argc; optind++)
@@ -517,32 +592,27 @@ int main(int argc, char **argv)
 
     if (secure) {
         if (ndirs == 0) {
-            syslog(LOG_ERR, "no -s directory");
+            tftpd_log(LOG_ERR, "no -s directory");
             exit(EX_USAGE);
         }
         if (ndirs > 1) {
-            syslog(LOG_ERR, "too many -s directories");
+            tftpd_log(LOG_ERR, "too many -s directories");
             exit(EX_USAGE);
         }
         if (chdir(dirs[0])) {
-            syslog(LOG_ERR, "%s: %m", dirs[0]);
+            tftpd_log(LOG_ERR, "%s: %m", dirs[0]);
             exit(EX_NOINPUT);
         }
     }
 
     pw = getpwnam(user);
     if (!pw) {
-        syslog(LOG_ERR, "no user %s: %m", user);
+        tftpd_log(LOG_ERR, "no user %s: %m", user);
         exit(EX_NOUSER);
     }
 
-#ifdef WITH_REGEX
-    if (rewrite_file)
-        rewrite_rules = read_remap_rules(rewrite_file);
-#endif
-
     if (pidfile && !standalone) {
-        syslog(LOG_WARNING, "not in standalone mode, ignoring pid file");
+        tftpd_log(LOG_WARNING, "not in standalone mode, ignoring pid file");
         pidfile = NULL;
     }
 
@@ -554,7 +624,7 @@ int main(int argc, char **argv)
 #endif
             fd4 = socket(AF_INET, SOCK_DGRAM, 0);
             if (fd4 < 0) {
-                syslog(LOG_ERR, "cannot open IPv4 socket: %m");
+                tftpd_log(LOG_ERR, "cannot open IPv4 socket: %m");
                 exit(EX_OSERR);
             }
             tftpd_config_socket(fd4, 0);
@@ -568,10 +638,10 @@ int main(int argc, char **argv)
             fd6 = socket(AF_INET6, SOCK_DGRAM, 0);
             if (fd6 < 0) {
                 if (fd4 < 0) {
-                    syslog(LOG_ERR, "cannot open IPv6 socket: %m");
+                    tftpd_log(LOG_ERR, "cannot open IPv6 socket: %m");
                     exit(EX_OSERR);
                 } else {
-                    syslog(LOG_ERR,
+                    tftpd_log(LOG_ERR,
                            "cannot open IPv6 socket, disable IPv6: %m");
                 }
             }
@@ -596,7 +666,7 @@ int main(int argc, char **argv)
                     close(fd6);
                     fd6 = -1;
                     if (ai_fam == AF_INET6) {
-                        syslog(LOG_ERR,
+                        tftpd_log(LOG_ERR,
                                "Address %s is not in address family AF_INET6",
                                address);
                         exit(EX_USAGE);
@@ -609,7 +679,7 @@ int main(int argc, char **argv)
                     close(fd4);
                     fd4 = -1;
                     if (ai_fam == AF_INET) {
-                        syslog(LOG_ERR,
+                        tftpd_log(LOG_ERR,
                                "Address %s is not in address family AF_INET",
                                address);
                         exit(EX_USAGE);
@@ -621,7 +691,7 @@ int main(int argc, char **argv)
             case AF_UNSPEC:
                 break;
             default:
-                syslog(LOG_ERR,
+                tftpd_log(LOG_ERR,
                        "Numeric IPv6 addresses need to be enclosed in []");
                 exit(EX_USAGE);
             }
@@ -633,7 +703,7 @@ int main(int argc, char **argv)
                     err = set_sock_addr(address,
                                         (union sock_addr *)&bindaddr4, NULL);
                     if (err) {
-                        syslog(LOG_ERR,
+                        tftpd_log(LOG_ERR,
                                "cannot resolve local IPv4 bind address: %s, %s",
                                address, gai_strerror(err));
                         exit(EX_NOINPUT);
@@ -646,14 +716,14 @@ int main(int argc, char **argv)
                                         (union sock_addr *)&bindaddr6, NULL);
                     if (err) {
                         if (fd4 >= 0) {
-                            syslog(LOG_ERR,
+                            tftpd_log(LOG_ERR,
                                    "cannot resolve local IPv6 bind address: %s"
                                    "(%s); using IPv4 only",
                                    address, gai_strerror(err));
                             close(fd6);
                             fd6 = -1;
                         } else {
-                            syslog(LOG_ERR,
+                            tftpd_log(LOG_ERR,
                                    "cannot resolve local IPv6 bind address: %s"
                                    "(%s)", address, gai_strerror(err));
                             exit(EX_NOINPUT);
@@ -685,7 +755,7 @@ int main(int argc, char **argv)
                 } else if (!strcmp(portptr, "tftp")) {
                     /* It's TFTP, we're OK */
                 } else {
-                    syslog(LOG_ERR, "cannot resolve local bind port: %s",
+                    tftpd_log(LOG_ERR, "cannot resolve local bind port: %s",
                            portptr);
                     exit(EX_NOINPUT);
                 }
@@ -695,7 +765,7 @@ int main(int argc, char **argv)
         if (fd4 >= 0) {
             if (bind(fd4, (struct sockaddr *)&bindaddr4,
               sizeof(bindaddr4)) < 0) {
-                syslog(LOG_ERR, "cannot bind to local IPv4 socket: %m");
+                tftpd_log(LOG_ERR, "cannot bind to local IPv4 socket: %m");
                 exit(EX_OSERR);
             }
         }
@@ -706,18 +776,18 @@ int main(int argc, char **argv)
             if (fd4 >= 0 || force_ipv6)
                 if (setsockopt(fd6, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&on,
                   sizeof(on)))
-                    syslog(LOG_ERR, "cannot setsockopt IPV6_V6ONLY %m");
+                    tftpd_log(LOG_ERR, "cannot setsockopt IPV6_V6ONLY %m");
 #endif
             if (bind(fd6, (struct sockaddr *)&bindaddr6,
               sizeof(bindaddr6)) < 0) {
                 if (fd4 >= 0) {
-                    syslog(LOG_ERR,
+                    tftpd_log(LOG_ERR,
                            "cannot bind to local IPv6 socket,"
                            "IPv6 disabled: %m");
                     close(fd6);
                     fd6 = -1;
                 } else {
-                    syslog(LOG_ERR, "cannot bind to local IPv6 socket: %m");
+                    tftpd_log(LOG_ERR, "cannot bind to local IPv6 socket: %m");
                     exit(EX_OSERR);
                 }
             }
@@ -727,7 +797,7 @@ int main(int argc, char **argv)
         /* Note: when running in secure mode (-s), we must not chdir, since
            we are already in the proper directory. */
         if (!nodaemon && daemon(secure, 0) < 0) {
-            syslog(LOG_ERR, "cannot daemonize: %m");
+            tftpd_log(LOG_ERR, "cannot daemonize: %m");
             exit(EX_OSERR);
         }
         set_signal(SIGTERM, handle_exit, 0);
@@ -735,13 +805,13 @@ int main(int argc, char **argv)
         if (pidfile) {
             pf = fopen (pidfile, "w");
             if (!pf) {
-                syslog(LOG_ERR, "cannot open pid file '%s' for writing: %m", pidfile);
+                tftpd_log(LOG_ERR, "cannot open pid file '%s' for writing: %m", pidfile);
                 pidfile = NULL;
             } else {
                 if (fprintf(pf, "%d\n", getpid()) < 0)
-                    syslog(LOG_ERR, "error writing pid file '%s': %m", pidfile);
+                    tftpd_log(LOG_ERR, "error writing pid file '%s': %m", pidfile);
                 if (fclose(pf))
-                    syslog(LOG_ERR, "error closing pid file '%s': %m", pidfile);
+                    tftpd_log(LOG_ERR, "error closing pid file '%s': %m", pidfile);
             }
         }
         if (fd6 > fd4)
@@ -779,7 +849,7 @@ int main(int argc, char **argv)
 
         if (exit_signal) { /* happens in standalone mode only */
             if (pidfile && unlink(pidfile)) {
-                syslog(LOG_WARNING, "error removing pid file '%s': %m", pidfile);
+                tftpd_log(LOG_WARNING, "error removing pid file '%s': %m", pidfile);
                 exit(EX_OSERR);
             } else {
                 exit(0);
@@ -827,7 +897,7 @@ int main(int argc, char **argv)
             continue;           /* Signal caught, reloop */
 
         if (rv == -1) {
-            syslog(LOG_ERR, "select loop: %m");
+            tftpd_log(LOG_ERR, "select loop: %m");
             exit(EX_IOERR);
         } else if (rv == 0) {
             exit(0);            /* Timeout, return to inetd */
@@ -849,18 +919,18 @@ int main(int argc, char **argv)
             if (E_WOULD_BLOCK(errno) || errno == EINTR) {
                 continue;       /* Again, from the top */
             } else {
-                syslog(LOG_ERR, "recvfrom: %m");
+                tftpd_log(LOG_ERR, "recvfrom: %m");
                 exit(EX_IOERR);
             }
         }
 
 #ifdef HAVE_IPV6
         if ((from.sa.sa_family != AF_INET) && (from.sa.sa_family != AF_INET6)) {
-            syslog(LOG_ERR, "received address was not AF_INET/AF_INET6,"
+            tftpd_log(LOG_ERR, "received address was not AF_INET/AF_INET6,"
                    " please check your inetd config");
 #else
         if (from.sa.sa_family != AF_INET) {
-            syslog(LOG_ERR, "received address was not AF_INET,"
+            tftpd_log(LOG_ERR, "received address was not AF_INET,"
                    " please check your inetd config");
 #endif
             exit(EX_PROTOCOL);
@@ -889,7 +959,7 @@ int main(int argc, char **argv)
          */
         pid = fork();
         if (pid < 0) {
-            syslog(LOG_ERR, "fork: %m");
+            tftpd_log(LOG_ERR, "fork: %m");
             exit(EX_OSERR);     /* Return to inetd, just in case */
         } else if (pid == 0)
             break;              /* Child exit, parent loop */
@@ -903,7 +973,7 @@ int main(int argc, char **argv)
     /* Make sure the log socket is still connected.  This has to be
        done before the chroot, while /dev/log is still accessible.
        When not running standalone, there is little chance that the
-       syslog daemon gets restarted by the time we get here. */
+       tftpd_log daemon gets restarted by the time we get here. */
     if (secure && standalone) {
         closelog();
         openlog(tftpd_progname, LOG_PID | LOG_NDELAY, LOG_DAEMON);
@@ -926,10 +996,10 @@ int main(int argc, char **argv)
     }
     if (hosts_access(&wrap_request) == 0) {
         if (deny_severity != -1)
-            syslog(deny_severity, "connection refused from %s", tmp_p);
+            tftpd_log(deny_severity, "connection refused from %s", tmp_p);
         exit(EX_NOPERM);        /* Access denied */
     } else if (allow_severity != -1) {
-        syslog(allow_severity, "connect from %s", tmp_p);
+        tftpd_log(allow_severity, "connect from %s", tmp_p);
     }
 #endif
 
@@ -941,7 +1011,7 @@ int main(int argc, char **argv)
 
     peer = socket(myaddr.sa.sa_family, SOCK_DGRAM, 0);
     if (peer < 0) {
-        syslog(LOG_ERR, "socket: %m");
+        tftpd_log(LOG_ERR, "socket: %m");
         exit(EX_IOERR);
     }
 
@@ -953,7 +1023,7 @@ int main(int argc, char **argv)
 #ifdef HAVE_SETGROUPS
     setrv = setgroups(0, NULL);
     if (setrv && errno != EPERM) {
-	syslog(LOG_ERR, "cannot clear group list");
+	tftpd_log(LOG_ERR, "cannot clear group list");
 	die = EX_OSERR;
     }
 #endif
@@ -962,7 +1032,7 @@ int main(int argc, char **argv)
     if (!setrv) {
 	die = 0;
     } else if (errno != EPERM) {
-        syslog(LOG_ERR, "cannot set groups for user %s", user);
+        tftpd_log(LOG_ERR, "cannot set groups for user %s", user);
 	die = EX_OSERR;
     }
 #endif
@@ -972,7 +1042,7 @@ int main(int argc, char **argv)
     /* Chroot and drop privileges */
     if (secure) {
         if (chroot(".")) {
-            syslog(LOG_ERR, "chroot: %m");
+            tftpd_log(LOG_ERR, "chroot: %m");
             exit(EX_OSERR);
         }
 #ifdef __CYGWIN__
@@ -1005,18 +1075,18 @@ int main(int argc, char **argv)
     }
 
     if (setrv) {
-        syslog(LOG_ERR, "cannot drop privileges: %m");
+        tftpd_log(LOG_ERR, "cannot drop privileges: %m");
         exit(EX_OSERR);
     }
 
     /* Process the request... */
     if (pick_port_bind(peer, &myaddr, portrange_from, portrange_to) < 0) {
-        syslog(LOG_ERR, "bind: %m");
+        tftpd_log(LOG_ERR, "bind: %m");
         exit(EX_IOERR);
     }
 
     if (connect(peer, &from.sa, SOCKLEN(&from)) < 0) {
-        syslog(LOG_ERR, "connect: %m");
+        tftpd_log(LOG_ERR, "connect: %m");
         exit(EX_IOERR);
     }
 
@@ -1106,11 +1176,11 @@ int tftp(struct tftphdr *tp, int size)
                 }
                 if (filename == origfilename
                     || !strcmp(filename, origfilename))
-                    syslog(LOG_NOTICE, "%s from %s filename %s\n",
+                    tftpd_log(LOG_NOTICE, "%s from %s filename %s\n",
                            tp_opcode == WRQ ? "WRQ" : "RRQ",
                            tmp_p, filename);
                 else
-                    syslog(LOG_NOTICE,
+                    tftpd_log(LOG_NOTICE,
                            "%s from %s filename %s remapped to %s\n",
                            tp_opcode == WRQ ? "WRQ" : "RRQ",
                            tmp_p, origfilename,
@@ -1410,6 +1480,66 @@ static char *rewrite_access(const struct formats *pf, char *filename,
     return filename;
 }
 
+static int test_validate_fail(char *filename, int mode,
+                              const struct formats *pf,
+                              const char **errmsg)
+{
+    (void)filename;
+    (void)mode;
+    (void)pf;
+    if (errmsg)
+        *errmsg = "Just testing...";
+    return EACCESS;
+}
+
+static void rewrite_test(FILE *tf)
+{
+    static const struct formats test_dummy_format =
+        { "dummy", NULL, test_validate_fail, NULL, NULL, 0 };
+    /* Dummy addresses from netblocks assigned for documentation */
+    static const char phony_ip6_addr[16] =
+        { 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+          0xfe, 0xed, 0xfa, 0xce, 0xde, 0xad, 0xbe, 0xef };
+    static const char phony_ip4_addr[4] = { 192, 0, 2, 34 };
+    int mode = cancreate ? WRQ : RRQ;
+    int af = ai_fam;
+
+    memset(&from, 0, sizeof from);
+
+    switch (af) {
+#if HAVE_IPV6
+    case AF_INET6:
+        memcpy(&from.s6.sin6_addr, phony_ip6_addr, 16);
+        break;
+#endif
+    default:
+        af = AF_INET;
+        memcpy(&from.si.sin_addr, phony_ip4_addr, 4);
+        break;
+    }
+    from.sa.sa_family = af;
+
+    while (fgets(buf, MAX_SEGSIZE+1, tf)) {
+        const char *msg;
+        char *out;
+        char *nl = strchr(buf, '\n');
+        if (!nl)
+            continue;
+
+        *nl = '\0';
+        out = rewrite_string(&test_dummy_format, buf, rewrite_rules,
+                             mode, af, rewrite_macros, &msg);
+
+        if (out) {
+            printf("%s\n", out);
+            if (out != buf)
+                tffree(out);
+        } else {
+            printf("ERROR: %s\n", msg);
+        }
+    }
+}
+
 #else
 static char *rewrite_access(const struct formats *pf, char *filename,
 			    int mode, int af, const char **msg)
@@ -1486,19 +1616,8 @@ static int validate_access(char *filename, int mode,
 #endif
 
     fd = open(filename, mode == RRQ ? rmode : wmode, 0666);
-    if (fd < 0) {
-        switch (errno) {
-        case ENOENT:
-        case ENOTDIR:
-            return ENOTFOUND;
-        case ENOSPC:
-            return ENOSPACE;
-        case EEXIST:
-            return EEXISTS;
-        default:
-            return errno + 100;
-        }
-    }
+    if (fd < 0)
+        return -errno;
 
     if (fstat(fd, &stbuf) < 0)
         exit(EX_OSERR);         /* This shouldn't happen */
@@ -1563,13 +1682,13 @@ static void tftp_sendfile(const struct formats *pf, struct tftphdr *oap, int oac
       oack:
         r_timeout = timeout;
         if (send(peer, oap, oacklen, 0) != oacklen) {
-            syslog(LOG_WARNING, "tftpd: oack: %m\n");
+            tftpd_log(LOG_WARNING, "tftpd: oack: %m\n");
             goto abort;
         }
         for (;;) {
             n = recv_time(peer, ackbuf, sizeof(ackbuf), 0, &r_timeout);
             if (n < 0) {
-                syslog(LOG_WARNING, "tftpd: read: %m\n");
+                tftpd_log(LOG_WARNING, "tftpd: read: %m\n");
                 goto abort;
             }
             ap = (struct tftphdr *)ackbuf;
@@ -1577,7 +1696,7 @@ static void tftp_sendfile(const struct formats *pf, struct tftphdr *oap, int oac
             ap_block = ntohs((u_short) ap->th_block);
 
             if (ap_opcode == ERROR) {
-                syslog(LOG_WARNING,
+                tftpd_log(LOG_WARNING,
                        "tftp: client does not accept options\n");
                 goto abort;
             }
@@ -1595,7 +1714,7 @@ static void tftp_sendfile(const struct formats *pf, struct tftphdr *oap, int oac
     do {
         size = readit(file, &dp, pf->f_convert);
         if (size < 0) {
-            nak(errno + 100, NULL);
+            nak(-errno, NULL);
             goto abort;
         }
         dp->th_opcode = htons((u_short) DATA);
@@ -1605,14 +1724,14 @@ static void tftp_sendfile(const struct formats *pf, struct tftphdr *oap, int oac
 
         r_timeout = timeout;
         if (send(peer, dp, size + 4, 0) != size + 4) {
-            syslog(LOG_WARNING, "tftpd: write: %m");
+            tftpd_log(LOG_WARNING, "tftpd: write: %m");
             goto abort;
         }
         read_ahead(file, pf->f_convert);
         for (;;) {
             n = recv_time(peer, ackbuf, sizeof(ackbuf), 0, &r_timeout);
             if (n < 0) {
-                syslog(LOG_WARNING, "tftpd: read(ack): %m");
+                tftpd_log(LOG_WARNING, "tftpd: read(ack): %m");
                 goto abort;
             }
             ap = (struct tftphdr *)ackbuf;
@@ -1684,14 +1803,14 @@ static void tftp_recvfile(const struct formats *pf,
       send_ack:
         r_timeout = timeout;
         if (send(peer, ackbuf, acksize, 0) != acksize) {
-            syslog(LOG_WARNING, "tftpd: write(ack): %m");
+            tftpd_log(LOG_WARNING, "tftpd: write(ack): %m");
             goto abort;
         }
         write_behind(file, pf->f_convert);
         for (;;) {
             n = recv_time(peer, dp, PKTSIZE, 0, &r_timeout);
             if (n < 0) {        /* really? */
-                syslog(LOG_WARNING, "tftpd: read: %m");
+                tftpd_log(LOG_WARNING, "tftpd: read: %m");
                 goto abort;
             }
             dp_opcode = ntohs((u_short) dp->th_opcode);
@@ -1712,7 +1831,7 @@ static void tftp_recvfile(const struct formats *pf,
         size = writeit(file, &dp, n - 4, pf->f_convert);
         if (size != (n - 4)) {  /* ahem */
             if (size < 0)
-                nak(errno + 100, NULL);
+                nak(-errno, NULL);
             else
                 nak(ENOSPACE, NULL);
             goto abort;
@@ -1755,30 +1874,42 @@ static const char *const errmsgs[] = {
 /*
  * Send a nak packet (error message).
  * Error code passed in is one of the
- * standard TFTP codes, or a UNIX errno
- * offset by 100.
+ * standard TFTP codes, or a negative
+ * errno.
  */
 static void nak(int error, const char *msg)
 {
     struct tftphdr *tp;
     int length;
 
-    tp = (struct tftphdr *)buf;
-    tp->th_opcode = htons((u_short) ERROR);
-
-    if (error >= 100) {
-        /* This is a Unix errno+100 */
-        if (!msg)
-            msg = strerror(error - 100);
-        error = EUNDEF;
-    } else {
-        if ((unsigned)error >= ERR_CNT)
-            error = EUNDEF;
-
-        if (!msg)
-            msg = errmsgs[error];
+    switch (error) {
+    case -ENOENT:
+    case -ENOTDIR:
+    case -EPERM:
+        error = ENOTFOUND;
+        break;
+    case -ENOSPC:
+        error = ENOSPACE;
+        break;
+    case -EEXIST:
+        error = EEXISTS;
+        break;
+    default:
+        break;
     }
 
+    if ((unsigned)error >= ERR_CNT) {
+            error = EUNDEF;
+            if (!msg && error < 0)
+                msg = strerror(-error);
+    } else if (!msg) {
+        msg = errmsgs[error];
+    }
+
+    if (!msg)
+        msg = "Request failed";
+
+    tp = (struct tftphdr *)buf;
     tp->th_code = htons((u_short) error);
 
     length = strlen(msg) + 1;
@@ -1792,10 +1923,10 @@ static void nak(int error, const char *msg)
             tmp_p = tmpbuf;
             strcpy(tmpbuf, "???");
         }
-        syslog(LOG_INFO, "sending NAK (%d, %s) to %s",
+        tftpd_log(LOG_INFO, "sending NAK (%d, %s) to %s",
                error, tp->th_msg, tmp_p);
     }
 
     if (send(peer, buf, length, 0) != length)
-        syslog(LOG_WARNING, "nak: %m");
+        tftpd_log(LOG_WARNING, "nak: %m");
 }

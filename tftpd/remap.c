@@ -15,12 +15,11 @@
  */
 
 #include "config.h"             /* Must be included first! */
-#include <ctype.h>
-#include <syslog.h>
-#include <regex.h>
-
 #include "tftpd.h"
 #include "remap.h"
+
+#include <ctype.h>
+#include <regex.h>
 
 #define DEADMAN_MAX_STEPS	4096    /* Timeout after this many steps */
 
@@ -77,6 +76,7 @@ struct xform_state {
     xform_func xform;
     char *out;
     size_t len;
+    int err;
 #if WITH_MB
     mbstate_t ps;
 #endif
@@ -87,13 +87,11 @@ static xform_int xform_null(xform_int xc)
     return xc;
 }
 
-static void xform_init(struct xform_state *xs, char *out, size_t init_len)
+static void xform_init(struct xform_state *xs, char *string)
 {
     memset(xs, 0, sizeof *xs);
     xs->xform = xform_null;
-    xs->len = init_len;
-    if (out)
-        xs->out = out + init_len;
+    xs->out = string;
 }
 
 #if WITH_MB
@@ -121,16 +119,16 @@ static const char *xform_out(struct xform_state *xs, const char *p, size_t len)
                     q += nb;
             }
         } else {
-            memset(&ips, 0, sizeof ips);
-            if (q)
-                *q++ = *p;
-            p++;
-            xs->len++;
-            len--;
+            /* Conversion error */
+            xs->err = 1;
+            break;
         }
     }
 
-    xs->out = q;
+    if (q) {
+        *q = '\0';
+        xs->out = q;
+    }
     return p;
 }
 
@@ -140,15 +138,18 @@ static const char *xform_out(struct xform_state *xs, const char *p, size_t len)
 {
     char *q = xs->out;
 
-    while (len-- && *p && *p != '\\') {
-        return p;
-
+    while (len && *p && *p != '\\') {
         if (q)
             q++ = xs->xform((unsigned char)*p);
         xs->len++;
+        p++;
+        len--;
     }
 
-    xs->out = q;
+    if (q) {
+        *q = '\0';
+        xs->out = q;
+    }
     return p;
 }
 
@@ -173,34 +174,43 @@ static size_t null_macrosub(char macro, char **macrodata)
     return (size_t)-1;
 }
 
+static size_t xsmemcpy(struct xform_state *xs, const char *from, size_t bytes)
+{
+    if (xs->out) {
+        memcpy(xs->out, from, bytes);
+        xs->out += bytes;
+        *xs->out = '\0';         /* Enforce null termination */
+    }
+    xs->len += bytes;
+    return xs->len;
+}
+
 static size_t
 do_genmatchstring(char *string, const char *pattern,
                   const char *ibuf, const regmatch_t *pmatch,
                   match_pattern_callback macrosub,
                   size_t start, size_t *nextp)
 {
-    size_t len, endbytes;
+    size_t endbytes;
     struct xform_state xs;
-    const char *input = ibuf + start;
+    const char *input;
     const char *pattern_end = strchr(pattern, '\0');
 
     if (!macrosub)
         macrosub = null_macrosub;
 
-    if (start == MATCHONLY || pmatch[0].rm_so == -1) {
-        endbytes = 0;
-        len = 0;
-    } else {
-        endbytes = strlen(input) - pmatch[0].rm_eo;
-        len = start + pmatch[0].rm_so;
-        if (string) {
-            /* Copy the prefix before match start, including before "start" */
-            memcpy(string, ibuf, len);
-            string += len;
-        }
-    }
+    xform_init(&xs, string);
 
-    xform_init(&xs, string, len);
+    if (start == MATCHONLY) {
+        input = ibuf;
+        endbytes = 0;
+    } else if (pmatch[0].rm_so == -1) {
+        return xsmemcpy(&xs, ibuf, strlen(ibuf)+1);
+    } else {
+        input = ibuf + start;
+        endbytes = strlen(input) - pmatch[0].rm_eo;
+        xsmemcpy(&xs, ibuf, start + pmatch[0].rm_so);
+    }
 
     /* Transform matched section */
     while (*pattern) {
@@ -272,13 +282,9 @@ do_genmatchstring(char *string, const char *pattern,
         *nextp = xs.len;
 
     /* Copy section after match */
-    xs.len += endbytes;
-    if (xs.out) {
-        xs.out[endbytes] = '\0';
-        memcpy(xs.out, input + pmatch[0].rm_eo, endbytes);
-    }
+    xsmemcpy(&xs, input + pmatch[0].rm_eo, endbytes);
 
-    return xs.len;
+    return xs.err ? (size_t)-1 : xs.len;
 }
 
 /*
@@ -295,6 +301,11 @@ genmatchstring(char **string, const char *pattern,
 
     len = do_genmatchstring(NULL, pattern, ibuf, pmatch,
                             macrosub, start, NULL);
+    if (len == (size_t)-1) {
+        *string = NULL;
+        return len;
+    }
+
     *string = buf = tfmalloc(len + 1);
     return do_genmatchstring(buf, pattern, ibuf, pmatch,
                              macrosub, start, nextp);
@@ -416,6 +427,7 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
             break;
         case '~':
             r->rule_flags |= RULE_INVERSE;
+            rxflags |= REG_NOSUB;
             break;
         case '4':
             r->rule_flags |= RULE_IPV4;
@@ -430,9 +442,9 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
             r->rule_flags |= RULE_WRQ;
             break;
         default:
-            syslog(LOG_ERR,
-                   "remap rule contains invalid flag \"%c\", line %u: %s",
-                   *p, lineno, line);
+            tftpd_log(LOG_ERR,
+                      "remap: line %u: invalid operation flag \"%c\"",
+                      *p, lineno);
             return -1;          /* Error */
             break;
         }
@@ -440,8 +452,8 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
 
     for (bc = badcombos; bc->flags; bc++) {
         if ((r->rule_flags & bc->flags) == bc->flags) {
-            syslog(LOG_ERR, "rule flags %c and %c cannot be combined, line %u: %s",
-                   bc->name[0], bc->name[1], lineno, line);
+            tftpd_log(LOG_ERR, "remap: line %u: rule flags %c and %c cannot be combined",
+                      lineno, bc->name[0], bc->name[1]);
             return -1;
         }
     }
@@ -454,14 +466,14 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
     if (RULE_HAS_REGEX(r->rule_flags)) {
         /* Read and compile the regex */
         if (!readescstring(buffer, &line)) {
-            syslog(LOG_ERR, "no regex on remap, line %u: %s", lineno, line);
+            tftpd_log(LOG_ERR, "remap: line %u: regex missing", lineno);
             return -1;              /* Error */
         }
 
         if ((rv = regcomp(&r->rx, buffer, rxflags)) != 0) {
             char *errbuf = tfmalloc(BUFSIZ);
             regerror(rv, &r->rx, errbuf, BUFSIZ);
-            syslog(LOG_ERR, "bad regex in remap, line %u: %s",
+            tftpd_log(LOG_ERR, "regex: line %u: bad regex: %s",
                    lineno, errbuf);
             return -1;              /* Error */
         }
@@ -570,6 +582,13 @@ void freerules(struct rule *r)
     }
 }
 
+static void clear_pmatch(int pmatches, regmatch_t *pmatch)
+{
+    int i;
+    for (i = 0; i < pmatches; i++)
+        pmatch[i].rm_so = pmatch[i].rm_eo = -1;
+}
+
 /* Execute a rule set on a string; returns a malloc'd new string. */
 char *rewrite_string(const struct formats *pf,
                      const char *input, const struct rule *rules,
@@ -581,17 +600,14 @@ char *rewrite_string(const struct formats *pf,
     const char *accerr;
     const struct rule *ruleptr = rules;
     regmatch_t pmatch[10];
-    int i;
     int deadman = deadman_max_steps;
-    int matchsense;
-    int pmatches;
     unsigned int bad_flags;
 
     /* Default error */
     *errmsg = "Remap table failure";
 
     if (verbosity >= 3) {
-        syslog(LOG_INFO, "remap: input: %s", current);
+        tftpd_log(LOG_INFO, "remap: input: %s", current);
     }
 
     bad_flags = RULE_LABEL | RULE_NOREGEX;
@@ -602,6 +618,9 @@ char *rewrite_string(const struct formats *pf,
 
     ruleptr = rules;
     while (ruleptr) {
+        const int inverse    = ruleptr->rule_flags & RULE_INVERSE;
+        const int pmatches   = inverse ? 0 : 10;
+        const int matchsense = inverse ? REG_NOMATCH : 0;
         int was_match;
         const char *whatami;
         const struct rule *next = ruleptr->next;
@@ -609,21 +628,27 @@ char *rewrite_string(const struct formats *pf,
         if (ruleptr->rule_flags & bad_flags)
             goto nextrule;
 
-        matchsense = ruleptr->rule_flags & RULE_INVERSE ? REG_NOMATCH : 0;
-        pmatches = ruleptr->rule_flags & RULE_INVERSE ? 0 : 10;
-
-        /* Clear the pmatch[] array */
-        for (i = 0; i < 10; i++)
-            pmatch[i].rm_so = pmatch[i].rm_eo = -1;
-
         if (!deadman--)
             goto dead;
 
         newstr = current;
-        was_match = regexec(&ruleptr->rx, current, pmatches, pmatch, 0)
+
+        /* Clear the pmatch[] array for good measure */
+        clear_pmatch(10, pmatch);
+        was_match = regexec(&ruleptr->rx, newstr, pmatches, pmatch, 0)
             == matchsense;
         if (!was_match)
             goto nextrule;      /* Rule did not match */
+
+        if (verbosity >= 5) {
+            tftpd_log(LOG_INFO, "remap: line %u: hit on %s%.*s%s, replacement: \"%s\"",
+                      ruleptr->line,
+                      inverse ? "~" : "\"",
+                      pmatch[0].rm_eo - pmatch[0].rm_so,
+                      inverse ? "" : newstr + pmatch[0].rm_so,
+                      inverse ? "" : "\"",
+                      ruleptr->pattern);
+        }
 
         whatami = "match";
 
@@ -635,13 +660,22 @@ char *rewrite_string(const struct formats *pf,
             while (1) {
                 char *newerstr;
                 size_t len;
+                size_t gg0 = ggoffset + pmatch[0].rm_so;
 
                 len = genmatchstring(&newerstr, ruleptr->pattern, newstr,
                                      pmatch, macrosub, ggoffset, &ggoffset);
 
+                if (len == (size_t)-1) {
+                    tffree(newstr);
+                    return NULL;
+                }
+
                 if (verbosity >= 4) {
-                    syslog(LOG_INFO, "remap: line %u: rewrite step: %s -> %s",
-                           ruleptr->line, newstr, newerstr);
+                    tftpd_log(LOG_INFO, "remap: line %u: rewrite step: \"%.*s\" -> \"%.*s\" [%d]",
+                              ruleptr->line,
+                              pmatch[0].rm_eo - pmatch[0].rm_so, newstr + gg0,
+                              (int)(ggoffset - gg0), newerstr + gg0,
+                              (int)(ggoffset - gg0));
                 }
 
                 if (newstr != current)
@@ -656,6 +690,7 @@ char *rewrite_string(const struct formats *pf,
                 else if (ggoffset >= len)
                     break;
 
+                clear_pmatch(pmatches, pmatch);
                 if (regexec(&ruleptr->rx, newstr + ggoffset, pmatches,
                             pmatch, ggoffset ? REG_NOTBOL : 0) != matchsense)
                     break;
@@ -668,7 +703,7 @@ char *rewrite_string(const struct formats *pf,
         if ((ruleptr->rule_flags & RULE_HASFILE) &&
             pf->f_validate(newstr, mode, pf, &accerr)) {
             if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: line %u: ignoring %s (%s)",
+                tftpd_log(LOG_INFO, "remap: line %u: ignoring %s (%s)",
                        ruleptr->line, whatami, accerr);
             }
             was_match = 0;
@@ -680,7 +715,7 @@ char *rewrite_string(const struct formats *pf,
             tffree(current);
             current = newstr;
             if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: line %u: rewrite result: %s",
+                tftpd_log(LOG_INFO, "remap: line %u: rewrite result: %s",
                        ruleptr->line, current);
             }
         }
@@ -690,9 +725,9 @@ char *rewrite_string(const struct formats *pf,
 
         newstr = NULL;
         if (ruleptr->rule_flags & (RULE_ABORT|RULE_JUMP)) {
-            genmatchstring(&newstr, ruleptr->pattern, current,
-                           pmatch, macrosub, MATCHONLY, NULL);
-            if (!newstr[0]) {
+            if ((ssize_t)genmatchstring(&newstr, ruleptr->pattern, current,
+                                        pmatch, macrosub, MATCHONLY, NULL)
+                <= 0) {
                 tffree(newstr);
                 newstr = NULL;
             }
@@ -700,7 +735,7 @@ char *rewrite_string(const struct formats *pf,
 
         if (ruleptr->rule_flags & RULE_ABORT) {
             if (verbosity >= 3) {
-                syslog(LOG_INFO, "remap: line %u: abort: %s",
+                tftpd_log(LOG_INFO, "remap: line %u: abort: %s",
                        ruleptr->line, current);
             }
 
@@ -711,7 +746,7 @@ char *rewrite_string(const struct formats *pf,
 
         if (ruleptr->rule_flags & (RULE_EXIT|RULE_HASFILE)) {
                 if (verbosity >= 3) {
-                    syslog(LOG_INFO, "remap: line %u: exit",
+                    tftpd_log(LOG_INFO, "remap: line %u: exit",
                            ruleptr->line);
             }
             return current; /* Exit here, we're done */
@@ -721,7 +756,7 @@ char *rewrite_string(const struct formats *pf,
             next = rules;
         } else if (ruleptr->rule_flags & RULE_JUMP) {
             if (!newstr) {
-                syslog(LOG_ERR, "remap: line %u: no label in j rule",
+                tftpd_log(LOG_ERR, "remap: line %u: no label in j rule",
                        ruleptr->line);
                 goto quit;
             }
@@ -732,7 +767,7 @@ char *rewrite_string(const struct formats *pf,
                     break;
             }
             if (!next) {
-                syslog(LOG_ERR, "remap: line %u: label not found: %s",
+                tftpd_log(LOG_ERR, "remap: line %u: label not found: %s",
                        ruleptr->line, newstr);
                 goto quit;
             }
@@ -741,10 +776,10 @@ char *rewrite_string(const struct formats *pf,
         if (verbosity >= 3) {
             if (next != ruleptr->next) {
                 if ((next->rule_flags & RULE_LABEL) && next->pattern[0]) {
-                    syslog(LOG_INFO, "remap: line %u: jump to %s",
+                    tftpd_log(LOG_INFO, "remap: line %u: jump to %s",
                            ruleptr->line, next->pattern);
                 } else {
-                    syslog(LOG_INFO, "remap: line %u: jump to line %u",
+                    tftpd_log(LOG_INFO, "remap: line %u: jump to line %u",
                            ruleptr->line, next->line);
                 }
             }
@@ -755,12 +790,12 @@ char *rewrite_string(const struct formats *pf,
     }
 
     if (verbosity >= 3) {
-        syslog(LOG_INFO, "remap: done");
+        tftpd_log(LOG_INFO, "remap: done: %s", current);
     }
     return current;
 
 dead:                           /* Deadman expired */
-    syslog(LOG_ERR,
+    tftpd_log(LOG_ERR,
            "remap: Breaking loop after %d steps, input = %s, last = %s",
            deadman_max_steps, input, newstr);
 quit:

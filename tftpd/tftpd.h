@@ -17,6 +17,12 @@
 #ifndef TFTPD_TFTPD_H
 #define TFTPD_TFTPD_H
 
+#include "config.h"
+#include <syslog.h>
+
+typedef void (*log_func)(int, const char *, ...);
+extern log_func tftpd_log;
+
 void set_signal(int, void (*)(int), int);
 void *tfmalloc(size_t);
 char *tfstrdup(const char *);

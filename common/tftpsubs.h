@@ -68,9 +68,10 @@ union sock_addr {
     (((union sock_addr*)sock)->sa.sa_family == AF_INET ? \
     (void *)&((union sock_addr*)sock)->si.sin_addr : \
     (void *)&((union sock_addr*)sock)->s6.sin6_addr)
+
 #else
 #define SOCKADDR_P(sock) \
-    (void *)&((union sock_addr*)sock)->si.sin_addr
+    ((void *)&((union sock_addr*)sock)->si.sin_addr)
 #endif
 
 #ifdef HAVE_IPV6

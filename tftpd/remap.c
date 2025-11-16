@@ -46,6 +46,13 @@
 
 int deadman_max_steps = DEADMAN_MAX_STEPS;
 
+#if defined(HAVE_WCHAR_H) && defined(HAVE_WCTYPE_H) && \
+    defined(HAVE_MBRTOWC) && defined(HAVE_TOWLOWER)
+# define WITH_MB 1
+#else
+# define WITH_MB 0
+#endif
+
 struct rule {
     struct rule *next;
     unsigned int line;
@@ -54,20 +61,98 @@ struct rule {
     const char *pattern;        /* Replacement pattern or label name */
 };
 
-static int xform_null(int c)
+#if WITH_MB
+typedef wint_t xform_int;
+#define xform_toupper towupper
+#define xform_tolower towlower
+#else
+typedef int xform_int;
+#define xform_toupper toupper
+#define xform_tolower tolower
+#endif
+
+typedef xform_int (*xform_func)(xform_int xc);
+
+struct xform_state {
+    xform_func xform;
+    char *out;
+    size_t len;
+#if WITH_MB
+    mbstate_t ps;
+#endif
+};
+
+static xform_int xform_null(xform_int xc)
 {
-    return c;
+    return xc;
 }
 
-static int xform_toupper(int c)
+static void xform_init(struct xform_state *xs, char *out, size_t init_len)
 {
-    return toupper(c);
+    memset(xs, 0, sizeof *xs);
+    xs->xform = xform_null;
+    xs->len = init_len;
+    if (out)
+        xs->out = out + init_len;
 }
 
-static int xform_tolower(int c)
+#if WITH_MB
+
+static const char *xform_out(struct xform_state *xs, const char *p, size_t len)
 {
-    return tolower(c);
+    static char dummy_mb_buf[MB_LEN_MAX];
+    mbstate_t ips;
+    char *q = xs->out;
+
+    memset(&ips, 0, sizeof ips);
+
+    while (len && *p && *p != '\\') {
+        wchar_t wc;
+        ssize_t nb = mbrtowc(&wc, p, len, &ips);
+
+        if (nb > 0) {
+            len -= nb;
+            p += nb;
+            wc = xs->xform(wc);
+            nb = wcrtomb(q ? q : dummy_mb_buf, wc, &xs->ps);
+            if (nb > 0) {
+                xs->len += nb;
+                if (q)
+                    q += nb;
+            }
+        } else {
+            memset(&ips, 0, sizeof ips);
+            if (q)
+                *q++ = *p;
+            p++;
+            xs->len++;
+            len--;
+        }
+    }
+
+    xs->out = q;
+    return p;
 }
+
+#else
+
+static const char *xform_out(struct xform_state *xs, const char *p, size_t len)
+{
+    char *q = xs->out;
+
+    while (len-- && *p && *p != '\\') {
+        return p;
+
+        if (q)
+            q++ = xs->xform((unsigned char)*p);
+        xs->len++;
+    }
+
+    xs->out = q;
+    return p;
+}
+
+#endif
 
 /*
  * Do \-substitution.  Call with string == NULL to get length only.
@@ -81,15 +166,26 @@ static int xform_tolower(int c)
  */
 #define MATCHONLY ((size_t)-1)
 
-static size_t do_genmatchstring(char *string, const char *pattern,
-                                const char *ibuf, const regmatch_t *pmatch,
-                                match_pattern_callback macrosub,
-                                size_t start, size_t *nextp)
+static size_t null_macrosub(char macro, char **macrodata)
 {
-    int (*xform) (int) = xform_null;
+    (void)macro;
+    (void)macrodata;
+    return (size_t)-1;
+}
+
+static size_t
+do_genmatchstring(char *string, const char *pattern,
+                  const char *ibuf, const regmatch_t *pmatch,
+                  match_pattern_callback macrosub,
+                  size_t start, size_t *nextp)
+{
     size_t len, endbytes;
-    size_t n, mlen, sublen;
+    struct xform_state xs;
     const char *input = ibuf + start;
+    const char *pattern_end = strchr(pattern, '\0');
+
+    if (!macrosub)
+        macrosub = null_macrosub;
 
     if (start == MATCHONLY || pmatch[0].rm_so == -1) {
         endbytes = 0;
@@ -104,12 +200,14 @@ static size_t do_genmatchstring(char *string, const char *pattern,
         }
     }
 
+    xform_init(&xs, string, len);
+
     /* Transform matched section */
     while (*pattern) {
-        mlen = 0;
-
-        if (*pattern == '\\' && pattern[1] != '\0') {
+        if (*pattern == '\\') {
             char macro = pattern[1];
+            pattern += 2;
+
             switch (macro) {
             case '0':
             case '1':
@@ -121,78 +219,76 @@ static size_t do_genmatchstring(char *string, const char *pattern,
             case '7':
             case '8':
             case '9':
-                n = pattern[1] - '0';
-
-                if (pmatch[n].rm_so != -1) {
-                    mlen = pmatch[n].rm_eo - pmatch[n].rm_so;
-                    len += mlen;
-                    if (string) {
-                        const char *p = input + start + pmatch[n].rm_so;
-                        while (mlen--)
-                            *string++ = xform(*p++);
-                    }
+            {
+                const regmatch_t *pm = &pmatch[macro - '0'];
+                if (pm->rm_so != -1) {
+                    xform_out(&xs, input + pm->rm_so,
+                              pm->rm_eo - pm->rm_so);
                 }
                 break;
+            }
 
             case 'L':
-                xform = xform_tolower;
+                xs.xform = xform_tolower;
                 break;
 
             case 'U':
-                xform = xform_toupper;
+                xs.xform = xform_toupper;
                 break;
 
             case 'E':
-                xform = xform_null;
+                xs.xform = xform_null;
+                break;
+
+            case '\0':
+                pattern--;
+                /* fall through */
+            case '\\':
+                xs.len++;
+                if (xs.out)
+                    *xs.out++ = '\\';
                 break;
 
             default:
-                if (macrosub &&
-                    (sublen = macrosub(macro, string)) != (size_t)-1) {
-                    while (sublen--) {
-                        len++;
-                        if (string) {
-                            *string = xform(*string);
-                            string++;
-                        }
-                    }
+            {
+                char *macrodata;
+                size_t sublen = macrosub(macro, &macrodata);
+                if (sublen != (size_t)-1) {
+                    xform_out(&xs, macrodata, sublen);
                 } else {
-                    len++;
-                    if (string)
-                        *string++ = xform(pattern[1]);
+                    /* Ignore the backslash prefix */
+                    pattern--;
                 }
+                break;
             }
-            pattern += 2;
+            }
         } else {
-            len++;
-            if (string)
-                *string++ = xform(*pattern);
-            pattern++;
+            pattern = xform_out(&xs, pattern, pattern_end - pattern);
         }
     }
 
     /* Pointer to post-substitution tail */
     if (nextp)
-        *nextp = len;
+        *nextp = xs.len;
 
     /* Copy section after match */
-    len += endbytes;
-    if (string) {
-        memcpy(string, input + pmatch[0].rm_eo, endbytes);
-        string[endbytes] = '\0';
+    xs.len += endbytes;
+    if (xs.out) {
+        xs.out[endbytes] = '\0';
+        memcpy(xs.out, input + pmatch[0].rm_eo, endbytes);
     }
 
-    return len;
+    return xs.len;
 }
 
 /*
  * Ditto, but allocate the string in a new buffer
  */
-static size_t genmatchstring(char **string, const char *pattern,
-                             const char *ibuf,
-                             const regmatch_t * pmatch,
-                             match_pattern_callback macrosub,
-                             size_t start, size_t *nextp)
+static size_t
+genmatchstring(char **string, const char *pattern,
+               const char *ibuf, const regmatch_t *pmatch,
+               match_pattern_callback macrosub,
+               size_t start, size_t *nextp)
 {
     size_t len;
     char *buf;

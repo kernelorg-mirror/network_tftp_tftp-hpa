@@ -65,6 +65,7 @@ AC_CHECK_HEADERS_ONCE(unistd.h)
 AC_CHECK_HEADERS_ONCE(sys/filio.h)
 AC_CHECK_HEADERS_ONCE(sys/stat.h)
 AC_CHECK_HEADERS_ONCE(sys/time.h)
+AC_CHECK_HEADERS_ONCE(locale.h)
 PA_CHECK_INTTYPES_H_SANE
 
 dnl This is needed on some versions of FreeBSD...
@@ -125,6 +126,11 @@ AC_CHECK_MEMBERS(struct addrinfo.ai_addr)
 AC_CHECK_DECLS([O_NONBLOCK, O_NDELAY, O_BINARY, O_TEXT])
 AC_CHECK_DECLS([F_SETLK])
 AC_CHECK_DECLS([LOCK_SH, LOCK_EX])
+
+PA_ADD_HEADERS(wctype.h)
+PA_ADD_HEADERS(wchar.h)
+AC_CHECK_FUNCS(mbrtowc)
+AC_CHECK_FUNCS(towlower)
 
 PA_SIGSETJMP
 

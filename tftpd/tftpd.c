@@ -365,6 +365,10 @@ int main(int argc, char **argv)
     const char *pidfile = NULL;
     u_short tp_opcode;
 
+#ifdef HAVE_LOCALE_H
+    setlocale(LC_CTYPE, "");     /* For to(w)(lower|upper)() */
+#endif
+
     /* basename() is way too much of a pain from a portability standpoint */
 
     p = strrchr(argv[0], '/');
@@ -1328,51 +1332,66 @@ static void do_opt(const char *opt, const char *val, char **ap)
 
 /*
  * This is called by the remap engine when it encounters macros such
- * as \i.  It should write the output in "output" if non-NULL, and
- * return the length of the output (generated or not).
+ * as \i. It should put the output in a static buffer and put the
+ * buffer address in *output, then return the length of the output
+ * not including the terminal null.
  *
- * Return (size_t)-1 on failure.
+ * Return (size_t)-1 for an invalid macro, which then will be handled
+ * by the substitution code.
  */
-static size_t rewrite_macros(char macro, char *output)
+static char hexchar(unsigned char c)
 {
-    char *p, tb[INET6_ADDRSTRLEN];
-    size_t l = 0;
+    return c >= 10 ? (c + 'A' - 10) : c + '0';
+}
+
+static size_t rewrite_macros(char macro, char **output)
+{
+#ifdef INET6_ADDRSTRLEN
+    static char obuf[INET_ADDRSTRLEN > 64 ? INET_ADDRSTRLEN : 64];
+#else
+    static char obuf[64];
+#endif
+    const unsigned char *cp;
+    size_t bytes;
+
+    *output = obuf;
+
+    switch (from.sa.sa_family) {
+    case AF_INET:
+        cp = (const unsigned char *)&from.si.sin_addr;
+        bytes = 4;
+        break;
+#ifdef HAVE_IPV6
+    case AF_INET6:
+        cp = (const unsigned char *)&from.s6.sin6_addr;
+        bytes = 16;
+        break;
+#endif
+    default:
+        return -1;               /* Unknown address family... */
+    }
 
     switch (macro) {
     case 'i':
-        p = (char *)inet_ntop(from.sa.sa_family, SOCKADDR_P(&from),
-                              tb, INET6_ADDRSTRLEN);
-        if (output && p)
-            strcpy(output, p);
-        if (!p)
-            return 0;
-        else
-            return strlen(p);
+    {
+        const char *p = inet_ntop(from.sa.sa_family, SOCKADDR_P(&from),
+                                  obuf, sizeof obuf);
+        return p ? strlen(p) : 0;
+    }
 
     case 'x':
-        if (output) {
-            if (from.sa.sa_family == AF_INET) {
-                sprintf(output, "%08lX",
-                    (unsigned long)ntohl(from.si.sin_addr.s_addr));
-                l = 8;
-#ifdef HAVE_IPV6
-            } else {
-                unsigned char *c = (unsigned char *)SOCKADDR_P(&from);
-                p = tb;
-                for (l = 0; l < 16; l++) {
-                    sprintf(p, "%02X", *c);
-                    c++;
-                    p += 2;
-                }
-                strcpy(output, tb);
-                l = strlen(tb);
-#endif
-            }
+    {
+        char *p = obuf;
+        while (bytes--) {
+            unsigned char c = *cp++;
+            *p++ = hexchar(c >> 4);
+            *p++ = hexchar(c & 15);
         }
-        return l;
+        return bytes << 1;
+    }
 
     default:
-        return -1;
+        return -1;              /* No such macro */
     }
 }
 

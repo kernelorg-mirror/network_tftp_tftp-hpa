@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <signal.h>
+#include <limits.h>
 
 #ifdef HAVE_SYS_TYPES_H
 #include <sys/types.h>
@@ -94,6 +95,17 @@
 #endif
 #ifdef HAVE_NETDB_H
 #include <netdb.h>
+#endif
+
+#ifdef HAVE_WCHAR_H
+#include <wchar.h>
+#endif
+#ifdef HAVE_WCTYPE_H
+#include <wctype.h>
+#endif
+
+#ifdef HAVE_LOCALE_H
+#include <locale.h>
 #endif
 
 #ifdef HAVE_GETOPT_LONG

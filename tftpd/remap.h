@@ -22,11 +22,16 @@ struct rule;
 
 #ifdef WITH_REGEX
 
-/* This is called when we encounter a substitution like \i.  The
-   macro character is passed as the first argument; the output buffer,
-   if any, is passed as the second argument.  The function should return
-   the number of characters output, or (size_t)-1 on failure. */
-typedef size_t (*match_pattern_callback) (char, char *);
+/*
+ * This is called by the remap engine when it encounters macros such
+ * as \i. It should put the output in a static buffer and put the
+ * buffer address in *output, then return the length of the output
+ * not including the terminal null.
+ *
+ * Return (size_t)-1 for an invalid macro, which then will be handled
+ * by the substitution code.
+ */
+typedef size_t (*match_pattern_callback) (char, char **);
 
 /* Read a rule file */
 struct rule *parserulefile(FILE *);

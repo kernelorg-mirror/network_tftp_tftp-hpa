@@ -6,8 +6,8 @@ Changes in 5.2:
 Changes in 5.1:
 	Add -P option to write a PID file.  Patch by Ferenc Wagner.
 
-	Bounce the syslog socket in standalone mode, in case the
-	syslog daemon has been restarted.  Patch by Ferenc Wagner.
+	Bounce the tftpd_log socket in standalone mode, in case the
+	tftpd_log daemon has been restarted.  Patch by Ferenc Wagner.
 
 	Build fixes.
 

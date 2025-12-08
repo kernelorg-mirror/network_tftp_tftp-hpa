@@ -9,12 +9,12 @@ OBJS = tftpd.$(O) recvfrom.$(O) misc.$(O) $(TFTPDOBJS)
 all: tftpd$(X) tftpd.8
 
 tftpd$(X): $(OBJS)
-	$(CC) $(LDFLAGS) $^ $(TFTPD_LIBS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) -o tftpd$(X) $(OBJS) $(TFTPD_LIBS)
 
 $(OBJS): ../common/tftpsubs.h
 
 tftpd.8: tftpd.8.in ../version
-	sed -e 's/@@VERSION@@/$(VERSION)/g' < $< > $@
+	sed -e 's/@@VERSION@@/$(VERSION)/g' < tftpd.8.in > tftpd.8
 
 install: all
 	mkdir -p $(INSTALLROOT)$(SBINDIR) $(INSTALLROOT)$(MANDIR)/man8

@@ -1910,7 +1910,8 @@ static void nak(int error, const char *msg)
         msg = "Request failed";
 
     tp = (struct tftphdr *)buf;
-    tp->th_code = htons((u_short) error);
+    tp->th_opcode = htons((u_short) ERROR);
+    tp->th_code   = htons((u_short) error);
 
     length = strlen(msg) + 1;
     memcpy(tp->th_msg, msg, length);

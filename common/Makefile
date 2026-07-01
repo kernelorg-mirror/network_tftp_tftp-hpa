@@ -4,7 +4,7 @@ VERSION = $(shell cat ../version)
 -include ../config/MCONFIG
 include ../MRULES
 
-OBJS = tftpsubs.$(O) signal.$(O) xmalloc.$(O) xstrdup.$(O) progname.$(O)
+OBJS = tftpsubs.$(O) signal.$(O) xalloc.$(O) progname.$(O)
 LIB  = libcommon.a
 
 all: $(LIB)

@@ -35,6 +35,7 @@
 
 #include "config.h"             /* Must be included first */
 #include "tftpd.h"
+#include "path.h"
 
 /*
  * Trivial file transfer protocol server.
@@ -96,7 +97,7 @@ static off_t tsize;
 static int tsize_ok;
 
 static int ndirs;
-static const char **dirs;
+static const char * const **dirs;
 
 static int secure = 0;
 int cancreate = 0;
@@ -413,6 +414,7 @@ int main(int argc, char **argv)
 #endif
     const char *pidfile = NULL;
     u_short tp_opcode;
+    bool patherr;
 
 #ifdef HAVE_LOCALE_H
     setlocale(LC_CTYPE, "");     /* For to(w)(lower|upper)() */
@@ -582,24 +584,38 @@ int main(int argc, char **argv)
 #endif
 
     dirs = xmalloc((argc - optind + 1) * sizeof(char *));
-    for (ndirs = 0; optind != argc; optind++)
-        dirs[ndirs++] = argv[optind];
-
+    patherr = false;
+    for (ndirs = 0; optind != argc; optind++) {
+        const char *path = argv[optind];
+        const char * const *pathlist = parse_path(path);
+        if (!pathlist) {
+            tftpd_log(LOG_ERR, "invalid path: %s", path);
+            patherr = true;
+        }
+        dirs[ndirs++] = pathlist;
+    }
     dirs[ndirs] = NULL;
 
+    if (patherr)
+        exit(EX_DATAERR);
+
+    if (!ndirs) {
+        tftpd_log(LOG_ERR, "directory list not specified");
+        exit(EX_USAGE);
+    }
+
     if (secure) {
-        if (ndirs == 0) {
-            tftpd_log(LOG_ERR, "no -s directory");
+        if (ndirs != 1) {
+            tftpd_log(LOG_ERR, "-s requires exactly one directory");
             exit(EX_USAGE);
         }
-        if (ndirs > 1) {
-            tftpd_log(LOG_ERR, "too many -s directories");
-            exit(EX_USAGE);
-        }
-        if (chdir(dirs[0])) {
-            tftpd_log(LOG_ERR, "%s: %m", dirs[0]);
+
+        char *securepath = build_path(dirs[0]);
+        if (chdir(securepath)) {
+            tftpd_log(LOG_ERR, "%s: %m", securepath);
             exit(EX_NOINPUT);
         }
+        free(securepath);
     }
 
     pw = getpwnam(user);
@@ -980,7 +996,7 @@ int main(int argc, char **argv)
     /* Verify if this was a legal request for us.  This has to be
        done before the chroot, while /etc is still accessible. */
     request_init(&wrap_request,
-                 RQ_DAEMON, tftpd_progname,
+                 RQ_DAEMON, _progname,
                  RQ_FILE, fd,
                  RQ_CLIENT_SIN, &from, RQ_SERVER_SIN, &myaddr, 0);
     sock_methods(&wrap_request);
@@ -1550,55 +1566,52 @@ static char *rewrite_access(const struct formats *pf, char *filename,
 #endif
 
 /*
- * Validate file access.  Since we
- * have no uid or gid, for now require
- * file to exist and be publicly
- * readable/writable, unless -p specified.
- * If we were invoked with arguments
- * from inetd then the file must also be
- * in one of the given directory prefixes.
- * Note also, full path name must be
- * given as we have no login directory.
+ * Validate file access and open the corresponding file.  Returns 0 if
+ * OK and the global variable "file" contains an open file handle.  On
+ * failure, returns an error code. The error code is negative if it is
+ * an errno and strerror() should be used for the error message, or
+ * positive if it is a TFTP status code and *errmsg is set.
+ *
+ * Since we have no uid or gid, for now require
+ * file to exist and be publicly readable/writable, unless -p
+ * specified.  If we were invoked with arguments from inetd then the
+ * file must also be in one of the given directory prefixes.  Note
+ * also, full path name must be given as we have no login directory.
+ *
+ * This function is also responsible for canonicalizing file paths.
+ * If "secure" is set the file path is used as-is, as the kernel
+ * is expected to enforce any namespace restrictions.
  */
 static int validate_access(char *filename, int mode,
 			   const struct formats *pf, const char **errmsg)
 {
     struct stat stbuf;
-    int i, len;
     int fd, wmode, rmode;
-    char *cp;
-    const char **dirp;
+    const char * const **dirp;
     char stdio_mode[3];
 
     tsize_ok = 0;
     *errmsg = NULL;
 
     if (!secure) {
-        if (*filename != '/') {
-            *errmsg = "Only absolute filenames allowed";
+        const char **pathlist = parse_path(filename);
+
+        if (!pathlist) {
+            *errmsg = "Invalid pathname specified";
             return (EACCESS);
         }
 
-        /*
-         * prevent tricksters from getting around the directory
-         * restrictions
-         */
-        len = strlen(filename);
-        for (i = 1; i < len - 3; i++) {
-            cp = filename + i;
-            if (*cp == '.' && memcmp(cp - 1, "/../", 4) == 0) {
-                *errmsg = "Reverse path not allowed";
-                return (EACCESS);
-            }
-        }
-
-        for (dirp = dirs; *dirp; dirp++)
-            if (strncmp(filename, *dirp, strlen(*dirp)) == 0)
+        for (dirp = dirs; *dirp; dirp++) {
+            if (compare_paths(pathlist, *dirp) & 2)
                 break;
-        if (*dirp == 0 && dirp != dirs) {
+        }
+        if (!*dirp) {
             *errmsg = "Forbidden directory";
             return (EACCESS);
         }
+
+        filename = build_path(pathlist);
+        free(pathlist);
     }
 
     /*
@@ -1614,14 +1627,18 @@ static int validate_access(char *filename, int mode,
 
     fd = open(filename, mode == RRQ ? rmode : wmode, 0666);
     if (fd < 0)
-        return -errno;
+        fd = -errno;
+    if (!secure)
+        free(filename);
+    if (fd < 0)
+        return fd;
 
     if (fstat(fd, &stbuf) < 0)
         exit(EX_OSERR);         /* This shouldn't happen */
 
     /* A duplicate RRQ or (worse!) WRQ packet could really cause havoc... */
     if (lock_file(fd, mode != RRQ))
-	exit(0);
+	exit(0);                /* Assume a transfer is already underway */
 
     if (mode == RRQ) {
         if (!unixperms && (stbuf.st_mode & (S_IREAD >> 6)) == 0) {

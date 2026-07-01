@@ -4,7 +4,7 @@ VERSION = $(shell cat ../version)
 -include ../config/MCONFIG
 include ../MRULES
 
-OBJS = tftpd.$(O) recvfrom.$(O) misc.$(O) $(TFTPDOBJS)
+OBJS = tftpd.$(O) recvfrom.$(O) misc.$(O) path.$(O) $(TFTPDOBJS)
 
 all: tftpd$(X) tftpd.8
 

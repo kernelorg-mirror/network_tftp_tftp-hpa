@@ -140,8 +140,6 @@ dnl
 SRCROOT=`cd $srcdir && pwd`
 OBJROOT=`pwd`
 
-PA_SEARCH_LIBS_AND_ADD(xmalloc, iberty)
-PA_SEARCH_LIBS_AND_ADD(xstrdup, iberty)
 PA_SEARCH_LIBS_AND_ADD(getopt_long, getopt, getopt_long)
 PA_SEARCH_LIBS_AND_ADD(getaddrinfo, [nsl resolv])
 AS_IF([$pa_add_getaddrinfo],

@@ -5,8 +5,8 @@
  * Returns NULL if the path is invalid (notably if it requires access
  * above the topmost directory level.)
  *
- * This code deliberately treats absolute and relative paths the same;
- * when the path is recanonicalized it will begin with /.
+ * To match historical behavior, the path must be absolute, starting
+ * with an explicit /.
  *
  * This returns a list of pointers into a string array, all allocated
  * as a single heap allocation.
@@ -15,6 +15,32 @@
 #include "config.h"
 #include "common/tftpsubs.h"
 #include "path.h"
+
+/*
+ * Validate a filename character. On Unix, disallow ASCII control
+ * characters (< 32, 127); on Windows, also disallow \ : and other
+ * characters disallowed in file names (use rewrite to translate \
+ * into / just as on Unix, if desired.)
+ */
+static bool is_valid_char(unsigned char c)
+{
+    switch (c) {
+    case 127:
+#ifdef _WIN32
+    case '<':
+    case '>':
+    case ':':
+    case '"':
+    case '\\':                  /* Slashes only for pathname separators! */
+    case '|':
+    case '?':
+    case '*':
+#endif
+        return false;
+    default:
+        return c >= ' ';
+    }
+}
 
 /*
  * Remove components as necessary, return the new tail pointer or NULL.
@@ -47,12 +73,21 @@ const char **parse_path(const char *path)
     size_t ndirs;
 
     /*
+     * For historical reasons, reject the path unless it explicitly
+     * beings with a slash.
+     */
+    if (*path != '/')
+        return NULL;            /* Path not absolute */
+
+    /*
      * Allocate space for the dirs list. The *maximum possible* number
      * equals the number of spans of non-slash characters.
      */
     was_slash = true;           /* Implicit leading slash */
     ndirs = 0;
     for (p = path; *p; p++) {
+        if (!is_valid_char(*p))
+            return NULL;        /* Invalid character in path */
         if (*p == '/') {
             was_slash = true;
         } else if (was_slash) {

@@ -76,7 +76,6 @@ static int ai_fam = AF_INET;
 #define TRIES   6               /* Number of attempts to send each packet */
 #define TIMEOUT_LIMIT ((1 << TRIES)-1)
 
-const char *tftpd_progname;
 static int peer;
 static unsigned long timeout  = TIMEOUT;        /* Current timeout value */
 static unsigned long rexmtval = TIMEOUT;       /* Basic timeout value */
@@ -406,7 +405,7 @@ int main(int argc, char **argv)
     int die;
     int waittime = 900;         /* Default time to wait for a connect */
     const char *user = "nobody";        /* Default user */
-    char *p, *ep;
+    char *ep;
     int use_stderr = 0;
     const char *map_test_file = NULL;
 #ifdef WITH_REGEX
@@ -419,11 +418,9 @@ int main(int argc, char **argv)
     setlocale(LC_CTYPE, "");     /* For to(w)(lower|upper)() */
 #endif
 
-    /* basename() is way too much of a pain from a portability standpoint */
+    set_progname(argv[0]);
 
-    p = strrchr(argv[0], '/');
-    tftpd_progname = (p && p[1]) ? p + 1 : argv[0];
-
+    /* rand() is used for TFTP backoff; it doesn't have to be good */
     srand(time(NULL) ^ getpid());
 
     while ((c = getopt_long(argc, argv, short_options, long_options, NULL))
@@ -565,7 +562,7 @@ int main(int argc, char **argv)
         }
 
     if (!use_stderr)
-        tftpd_openlog(tftpd_progname, LOG_PID | LOG_NDELAY, LOG_DAEMON);
+        tftpd_openlog(_progname, LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
 #ifdef WITH_REGEX
     if (rewrite_file)
@@ -976,7 +973,7 @@ int main(int argc, char **argv)
        tftpd_log daemon gets restarted by the time we get here. */
     if (secure && standalone) {
         closelog();
-        openlog(tftpd_progname, LOG_PID | LOG_NDELAY, LOG_DAEMON);
+        openlog(_progname, LOG_PID | LOG_NDELAY, LOG_DAEMON);
     }
 
 #ifdef HAVE_TCPWRAPPERS

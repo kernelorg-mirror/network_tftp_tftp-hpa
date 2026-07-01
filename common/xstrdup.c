@@ -6,6 +6,7 @@
  */
 
 #include "config.h"
+#include "tftpsubs.h"
 
 char *xstrdup(const char *s)
 {

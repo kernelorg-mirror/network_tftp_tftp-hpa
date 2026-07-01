@@ -295,9 +295,6 @@ typedef int socklen_t;
 
 /* Prototypes for libxtra functions */
 
-void *xmalloc(size_t);
-char *xstrdup(const char *);
-
 #ifndef HAVE_SIGHANDLER_T
 typedef void (*sighandler_t)(int);
 #endif

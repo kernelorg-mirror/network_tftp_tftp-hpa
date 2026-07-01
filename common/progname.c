@@ -1,0 +1,10 @@
+#include "config.h"
+#include "tftpsubs.h"
+
+const char *_progname;
+
+void set_progname(const char *argv0)
+{
+    const char *p = strrchr(argv0, '/');
+    _progname = p ? p+1 : argv0;
+}

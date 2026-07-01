@@ -186,8 +186,6 @@ char *tail(char *);
 
 char *xstrdup(const char *);
 
-const char *program;
-
 static void usage(int errcode)
 {
     fprintf(stderr,
@@ -196,7 +194,7 @@ static void usage(int errcode)
 #else
             "Usage: %s [-v][-l][-m mode] [host [port]] [-c command]\n",
 #endif
-            program);
+            _progname);
     exit(errcode);
 }
 
@@ -210,7 +208,7 @@ int main(int argc, char *argv[])
     const char *optx;
     char *peerargv[3];
 
-    program = argv[0];
+    set_progname(argv[0]);
 
     mode = MODE_DEFAULT;
 

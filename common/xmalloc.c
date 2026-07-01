@@ -6,6 +6,7 @@
  */
 
 #include "config.h"
+#include "tftpsubs.h"
 
 void *xmalloc(size_t size)
 {

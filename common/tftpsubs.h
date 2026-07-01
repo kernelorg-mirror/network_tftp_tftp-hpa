@@ -40,6 +40,12 @@
 
 #include "config.h"
 
+extern const char *_progname;
+void set_progname(const char *); /* main() should pass argv[0] here */
+
+void *xmalloc(size_t);
+char *xstrdup(const char *);
+
 union sock_addr {
     struct sockaddr     sa;
     struct sockaddr_in  si;

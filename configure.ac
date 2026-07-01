@@ -260,6 +260,10 @@ AC_PROG_INSTALL
    INSTALL='\${SRCROOT}'/"$INSTALL"
 fi]
 
+PA_ARG_ENABLED([werror],
+ [compile with -Werror to error out on any warning],
+ [PA_ADD_CFLAGS([-Werror])])
+
 PA_ADD_CFLAGS(-W)
 PA_ADD_CFLAGS(-Wall)
 PA_ADD_CFLAGS(-Wpointer-arith)

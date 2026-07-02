@@ -1,10 +1,8 @@
 /* ----------------------------------------------------------------------- *
  *
- *   Copyright 2001-2007 H. Peter Anvin - All Rights Reserved
+ * SPDX-License-Identifier: BSD-3-Clause
  *
- *   This program is free software available under the same license
- *   as the "OpenBSD" operating system, distributed at
- *   http://www.openbsd.org/.
+ *   Copyright 2001-2007 H. Peter Anvin - All Rights Reserved
  *
  * ----------------------------------------------------------------------- */
 

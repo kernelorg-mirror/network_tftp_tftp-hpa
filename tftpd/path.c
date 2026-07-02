@@ -202,6 +202,7 @@ const char **parse_path(const char *path, bool strict)
             *dp++ = q;
             was_slash = false;
         }
+        q++;
     }
     if (!was_slash) {
         dropped = adjust_tail(&dp, dirs);
@@ -209,6 +210,7 @@ const char **parse_path(const char *path, bool strict)
             goto fail;
     }
 
+    *dp = NULL;
     return dirs;
 
 fail:

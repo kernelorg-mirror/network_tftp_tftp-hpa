@@ -26,6 +26,95 @@
 
 #include "tftpd.h"
 
+/*
+ * The following socket-configuration helpers do not depend on recvmsg()
+ * or msghdr::msg_control support, and are used by both the recvmsg()-based
+ * myrecvfrom() implementation below and its non-recvmsg() fallback, so
+ * they are compiled unconditionally.
+ */
+
+void set_socket_nonblock(int fd, int flag)
+{
+    int flags;
+
+#if defined(HAVE_FCNTL) && (O_NONBLOCK != 0)
+    /* Posixly correct */
+    flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+        goto err;
+
+    if (flag)
+        flags |= O_NONBLOCK;
+    else
+        flags &= ~O_NONBLOCK;
+
+    if (fcntl(fd, F_SETFL, flags) < 0)
+        goto err;
+#else
+    flags = flag ? 1 : 0;
+    if (ioctl(fd, FIONBIO, &flags) < 0)
+        goto err;
+#endif
+    return;
+
+err:
+        tftpd_log(LOG_ERR, "Cannot set nonblock flag on socket: %m");
+        exit(EX_OSERR);
+}
+
+/* Disable pmtu discovery */
+static void pmtu_discovery_off(int fd)
+{
+#if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DONT)
+    int pmtu = IP_PMTUDISC_DONT;
+
+    setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtu, sizeof(pmtu));
+#endif
+}
+
+/* Try to enable getting the receive address in recvmsg() */
+static void enable_recvdstaddr(int fd)
+{
+    int on = 1;
+    (void)on;
+
+#ifdef IP_RECVDSTADDR
+    setsockopt(fd, IPPROTO_IP, IP_RECVDSTADDR, &on, sizeof(on));
+#endif
+#ifdef IP_PKTINFO
+    setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on));
+#endif
+#ifdef HAVE_IPV6
+#ifdef IPV6_RECVPKTINFO
+    setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on));
+#endif
+#endif
+}
+
+/*
+ * Configure a socket for myrecvfrom(). It should also be suitable
+ * for select().
+ *
+ * The "peer" flag indicates that this a connected peer socket.
+ */
+void tftpd_config_socket(int fd, int peer)
+{
+    /* Set socket as nonblocking */
+#ifdef __CYGWIN__
+    /* On Cygwin, a nonblocking socket returns immediately from select()! */
+    set_socket_nonblock(fd, 0);
+#else
+    set_socket_nonblock(fd, 1);
+#endif
+
+    /* Disable pmtu discovery (useless for TFTP and breaks things) */
+    pmtu_discovery_off(fd);
+
+    /* Get our own address in recvmsg()*/
+    if (!peer)
+        enable_recvdstaddr(fd);
+}
+
 #if defined(HAVE_RECVMSG) && defined(HAVE_STRUCT_MSGHDR_MSG_CONTROL)
 
 #ifdef HAVE_SYS_UIO_H
@@ -137,88 +226,6 @@ static void normalize_ip6_compat(union sock_addr *myaddr)
 #else
     (void)myaddr;
 #endif
-}
-
-void set_socket_nonblock(int fd, int flag)
-{
-    int flags;
-
-#if defined(HAVE_FCNTL) && (O_NONBLOCK != 0)
-    /* Posixly correct */
-    flags = fcntl(fd, F_GETFL, 0);
-    if (flags < 0)
-        goto err;
-
-    if (flag)
-        flags |= O_NONBLOCK;
-    else
-        flags &= ~O_NONBLOCK;
-
-    if (fcntl(fd, F_SETFL, flags) < 0)
-        goto err;
-#else
-    flags = flag ? 1 : 0;
-    if (ioctl(fd, FIONBIO, &flags) < 0)
-        goto err;
-#endif
-    return;
-
-err:
-        tftpd_log(LOG_ERR, "Cannot set nonblock flag on socket: %m");
-        exit(EX_OSERR);
-}
-
-/* Disable pmtu discovery */
-static void pmtu_discovery_off(int fd)
-{
-#if defined(IP_MTU_DISCOVER) && defined(IP_PMTUDISC_DONT)
-    int pmtu = IP_PMTUDISC_DONT;
-
-    setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtu, sizeof(pmtu));
-#endif
-}
-
-/* Try to enable getting the receive address in recvmsg() */
-static void enable_recvdstaddr(int fd)
-{
-    int on = 1;
-    (void)on;
-
-#ifdef IP_RECVDSTADDR
-    setsockopt(fd, IPPROTO_IP, IP_RECVDSTADDR, &on, sizeof(on));
-#endif
-#ifdef IP_PKTINFO
-    setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &on, sizeof(on));
-#endif
-#ifdef HAVE_IPV6
-#ifdef IPV6_RECVPKTINFO
-    setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &on, sizeof(on));
-#endif
-#endif
-}
-
-/*
- * Configure a socket for myrecvfrom(). It should also be suitable
- * for select().
- *
- * The "peer" flag indicates that this a connected peer socket.
- */
-void tftpd_config_socket(int fd, int peer)
-{
-    /* Set socket as nonblocking */
-#ifdef __CYGWIN__
-    /* On Cygwin, a nonblocking socket returns immediately from select()! */
-    set_socket_nonblock(fd, 0);
-#else
-    set_socket_nonblock(fd, 1);
-#endif
-
-    /* Disable pmtu discovery (useless for TFTP and breaks things) */
-    pmtu_discovery_off(fd);
-
-    /* Get our own address in recvmsg()*/
-    if (!peer)
-        enable_recvdstaddr(fd);
 }
 
 #ifdef HAVE_RECVMSG

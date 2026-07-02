@@ -186,6 +186,7 @@ const char **parse_path(const char *path, bool strict)
 
     dirs = dp = xmalloc((ndirs+1) * sizeof *dirs + path_len + 1);
     q = (char *)&dirs[ndirs+1];
+    memcpy(q, path, path_len + 1);
 
     was_slash = true;
     while (*q) {

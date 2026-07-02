@@ -1155,7 +1155,7 @@ int tftp(struct tftphdr *tp, int size)
             cp++;
         } while (cp < end && *cp);
 
-        if (*cp) {
+        if (cp == end) {
             nak(EBADOP, "Request not null-terminated");
             exit(0);
         }

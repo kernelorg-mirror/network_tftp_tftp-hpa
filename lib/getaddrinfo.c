@@ -28,7 +28,7 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
 {
     struct hostent  *host;
     struct sockaddr *sa;
-    int err, size = 0;
+    int size = 0;
 
     if ((!node) || (!res)) {
         errno = EINVAL;
@@ -77,11 +77,25 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
         (*res)->ai_addr = sa;
         (*res)->ai_addrlen = size;
         sa->sa_family = host->h_addrtype;
-        if (host->h_addrtype == AF_INET)
+        if (host->h_addrtype == AF_INET) {
+            if ((size_t)host->h_length > sizeof(((struct sockaddr_in *)sa)->sin_addr)) {
+                free(sa);
+                free(*res);
+                *res = NULL;
+                return EAI_SYSTEM;
+            }
             memcpy(&((struct sockaddr_in *)sa)->sin_addr, host->h_addr, host->h_length);
+        }
 #ifdef HAVE_IPV6
-        else
+        else {
+            if ((size_t)host->h_length > sizeof(((struct sockaddr_in6 *)sa)->sin6_addr)) {
+                free(sa);
+                free(*res);
+                *res = NULL;
+                return EAI_SYSTEM;
+            }
             memcpy(&((struct sockaddr_in6 *)sa)->sin6_addr, host->h_addr, host->h_length);
+        }
 #endif
     }
     if (host->h_name)

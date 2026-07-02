@@ -93,7 +93,8 @@ char *line = NULL;
 char line[LBUFLEN];
 #endif
 int margc;
-char *margv[20];
+#define MARGVSIZE 20
+char *margv[MARGVSIZE];
 const char *prompt = "tftp> ";
 sigjmp_buf toplevel;
 void intr(int);
@@ -868,18 +869,23 @@ struct cmd *getcmd(char *name)
 }
 
 /*
- * Slice a string up into argc/argv.
+ * Slice a string up into argc/argv. Silently discards any words beyond
+ * MARGVSIZE - 1 (leaving room for the NULL terminator) rather than
+ * overflowing the fixed-size margv[] array.
  */
 static void makeargv(void)
 {
     char *cp;
     char **argp = margv;
+    char **const argpend = &margv[MARGVSIZE - 1];
 
     margc = 0;
     for (cp = line; *cp;) {
         while (isspace(*cp))
             cp++;
         if (*cp == '\0')
+            break;
+        if (argp >= argpend)
             break;
         *argp++ = cp;
         margc += 1;

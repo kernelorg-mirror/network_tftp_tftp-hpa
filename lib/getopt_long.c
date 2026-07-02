@@ -104,7 +104,8 @@ int getopt_long(int argc, char *const *argv, const char *optstring,
 	}
     }
 
-    if ((uintptr_t) (pvt.optptr - carg) > (uintptr_t) strlen(carg)) {
+    if (!pvt.optptr ||
+	(uintptr_t) (pvt.optptr - carg) > (uintptr_t) strlen(carg)) {
 	/* Someone frobbed optind, change to new opt. */
 	pvt.optptr = carg + 1;
     }

@@ -51,7 +51,7 @@ int timeout;
 static sigjmp_buf timeoutbuf;
 
 static void nak(int, const char *);
-static int makerequest(int, const char *, struct tftphdr *, const char *);
+static int makerequest(int, const char *, struct tftphdr *, const char *, size_t);
 static void printstats(const char *, unsigned long);
 static void startclock(void);
 static void stopclock(void);
@@ -87,7 +87,11 @@ void tftp_sendfile(int fd, const char *name, const char *mode)
     tftp_signal(SIGALRM, timer, 0);
     do {
         if (is_request) {
-            size = makerequest(WRQ, name, dp, mode) - 4;
+            size = makerequest(WRQ, name, dp, mode, MAX_SEGSIZE + 4) - 4;
+            if (size < 0) {
+                fprintf(stderr, "tftp: %s: %s\n", name, strerror(errno));
+                goto abort;
+            }
         } else {
             /*      size = read(fd, dp->th_data, SEGSIZE);   */
             size = readit(file, &dp, convert);
@@ -193,7 +197,11 @@ void tftp_recvfile(int fd, const char *name, const char *mode)
     tftp_signal(SIGALRM, timer, 0);
     do {
         if (firsttrip) {
-            size = makerequest(RRQ, name, ap, mode);
+            size = makerequest(RRQ, name, ap, mode, sizeof(ackbuf));
+            if (size < 0) {
+                fprintf(stderr, "tftp: %s: %s\n", name, strerror(errno));
+                goto abort;
+            }
             firsttrip = 0;
         } else {
             ap->th_opcode = htons((u_short) ACK);
@@ -275,18 +283,34 @@ void tftp_recvfile(int fd, const char *name, const char *mode)
 
 static int
 makerequest(int request, const char *name,
-            struct tftphdr *tp, const char *mode)
+            struct tftphdr *tp, const char *mode, size_t tpsize)
 {
     char *cp;
+    size_t namelen, modelen;
+
+    namelen = strlen(name);
+    modelen = strlen(mode);
+
+    /*
+     * The request is encoded into tp as: opcode(2) name NUL mode NUL.
+     * tpsize is the total size of the buffer tp points to; reject
+     * anything that would not fit rather than overflowing it. Compare
+     * with subtraction on the tpsize side only, so there is no risk of
+     * namelen/modelen (both attacker/user-controlled) underflowing an
+     * unsigned computation.
+     */
+    if (tpsize < 4 || namelen > tpsize - 4 ||
+        modelen > tpsize - 4 - namelen) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
 
     tp->th_opcode = htons((u_short) request);
     cp = (char *)&(tp->th_stuff);
-    strcpy(cp, name);
-    cp += strlen(name);
-    *cp++ = '\0';
-    strcpy(cp, mode);
-    cp += strlen(mode);
-    *cp++ = '\0';
+    memcpy(cp, name, namelen + 1);
+    cp += namelen + 1;
+    memcpy(cp, mode, modelen + 1);
+    cp += modelen + 1;
     return (cp - (char *)tp);
 }
 

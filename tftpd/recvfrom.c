@@ -357,12 +357,17 @@ myrecvfrom(int s, void *buf, int len, unsigned int flags,
 {
     /* There is no way we can get the local address, fudge it */
     socklen_t fromlen = sizeof(*from);
+    int n;
+
+    n = recvfrom(s, buf, len, flags, &from->sa, &fromlen);
 
     bzero(myaddr, sizeof(*myaddr));
-    myaddr->sa.sa_family = from->sa.sa_family;
-    sa_set_port(myaddr, htons(IPPORT_TFTP));
+    if (n >= 0) {
+        myaddr->sa.sa_family = from->sa.sa_family;
+        sa_set_port(myaddr, htons(IPPORT_TFTP));
+    }
 
-    return recvfrom(s, buf, len, flags, &from->sa, &fromlen);
+    return n;
 }
 
 #endif

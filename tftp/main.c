@@ -586,21 +586,24 @@ void put(int argc, char *argv[])
     }
     /* this assumes the target is a directory */
     /* on a remote unix system.  hmmmm.  */
-    cp = strchr(targ, '\0');
-    *cp++ = '/';
     for (n = 1; n < argc - 1; n++) {
-        strcpy(cp, tail(argv[n]));
+        const char *base = tail(argv[n]);
+        char *remotepath = xmalloc(strlen(targ) + 1 + strlen(base) + 1);
+
+        sprintf(remotepath, "%s/%s", targ, base);
         fd = open(argv[n], O_RDONLY | mode->m_openflags);
         if (fd < 0) {
             fprintf(stderr, "tftp: ");
             perror(argv[n]);
+            free(remotepath);
             continue;
         }
         if (verbose)
             printf("putting %s to %s:%s [%s]\n",
-                   argv[n], hostname, targ, mode->m_mode);
+                   argv[n], hostname, remotepath, mode->m_mode);
         sa_set_port(&peeraddr, port);
-        tftp_sendfile(fd, targ, mode->m_mode);
+        tftp_sendfile(fd, remotepath, mode->m_mode);
+        free(remotepath);
     }
 }
 

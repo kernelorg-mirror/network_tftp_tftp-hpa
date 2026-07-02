@@ -170,7 +170,7 @@ void tftp_sendfile(int fd, const char *name, const char *mode)
             amount += size;
         is_request = 0;
         block++;
-    } while (size == SEGSIZE || block == 1);
+    } while (size == segsize || block == 1);
   abort:
     fclose(file);
     stopclock();
@@ -278,7 +278,7 @@ void tftp_recvfile(int fd, const char *name, const char *mode)
             break;
         }
         amount += size;
-    } while (size == SEGSIZE);
+    } while (size == segsize);
   abort:                       /* ok to ack, since user */
     ap->th_opcode = htons((u_short) ACK);       /* has seen err msg */
     ap->th_block = htons((u_short) block);

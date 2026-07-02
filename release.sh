@@ -1,4 +1,5 @@
 #!/bin/sh -xe
+# SPDX-License-Identifier: BSD-3-Clause
 # 
 # Script for generating a release
 #

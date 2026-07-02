@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+
 #
 # Extra functions which may not be available everywhere
 #

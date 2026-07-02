@@ -1,3 +1,4 @@
+dnl SPDX-License-Identifier: BSD-3-Clause
 dnl Process this file with autoconf 2.71 or later to produce
 dnl a configure script.
 AC_PREREQ([2.71])

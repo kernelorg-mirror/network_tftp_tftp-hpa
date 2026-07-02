@@ -1,4 +1,5 @@
 #!/bin/sh -x
+# SPDX-License-Identifier: BSD-3-Clause
 #
 # Run this script to regenerate autoconf files
 #

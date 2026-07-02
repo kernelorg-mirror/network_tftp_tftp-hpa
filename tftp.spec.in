@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-3-Clause
 Summary: The client for the Trivial File Transfer Protocol (TFTP).
 Name: tftp
 Version: @@VERSION@@

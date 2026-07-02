@@ -32,7 +32,7 @@ const char *inet_ntop(int af, const void *src,
             errno = ENOSPC;
             dst = NULL;
         } else {
-            struct in6_addr *a = src;
+            const struct in6_addr *a = src;
             int i;
 
             p = (char *)dst;

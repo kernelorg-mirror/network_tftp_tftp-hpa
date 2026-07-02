@@ -1,3 +1,33 @@
+Changes in 5.4:
+	*** Read the man page for important details ***
+
+	Much stricter validation of path names when operating in
+	non-chroot mode.
+
+	The remap engine now allows labels/jump targets for more
+	complex, multi-step rule processing.
+
+	The remap engine can now probe for the existence of a file.
+
+	New "gg" modifier to the "r" remapping rule.
+
+	Cleaner handling of restricted user namespaces on Linux.
+
+	Source code cleanups.
+
+	Add --enable-werror configure option.
+
+
+Changes in 5.3:
+	Allow separate IPv4 and IPv6 remapping rules.
+
+	Properly convert IPv6-mapped IPv4 addresses as IPv4 during
+	remapping.
+
+	Better detection of local addresses, trying to ensure that
+	the proper response address is used for a multihomed host.
+
+
 Changes in 5.2:
 	Fix breakage on newer Linux when a single interface has
 	multiple IP addresses.
@@ -145,7 +175,7 @@ Changes in 0.35:
 Changes in 0.34:
 	Additional Solaris gcc compiler bug workarounds; these
 	actually make the code somewhat cleaner.
-	
+
 
 Changes in 0.33:
 	Even better error messages.
@@ -235,7 +265,7 @@ Changes in 0.26:
 	number on stdout and immediately exit.
 
 	Add a -v option to tftp to start out in verbose mode.
-	
+
 	Rewrite the man pages using standard "man" troff macros.
 
 	Enable the (limited) use of readline on systems which don't
@@ -338,7 +368,7 @@ Changes in 0.17:
 	This should speed up handling large amounts of requests at
 	once, as can happen when a client starts up, and avoids inetd
 	misconfiguration problems.
-	
+
 
 Changes in 0.16:
 

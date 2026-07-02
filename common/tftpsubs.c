@@ -248,7 +248,7 @@ int synchnet(int f)
         FD_ZERO(&socketset);
         FD_SET(f, &socketset);
 
-        if (select(f, &socketset, NULL, NULL, &notime) <= 0)
+        if (select(f + 1, &socketset, NULL, NULL, &notime) <= 0)
             break;              /* Nothing to read */
 
         /* Otherwise drain the packet */

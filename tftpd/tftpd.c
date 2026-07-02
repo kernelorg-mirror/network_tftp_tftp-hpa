@@ -528,7 +528,7 @@ int main(int argc, char **argv)
         case OPT_MAP_STEPS:
         {
             unsigned long steps = strtoul(optarg, &ep, 0);
-            if (*optarg && *ep && steps > 0 && steps <= INT_MAX) {
+            if (*optarg && !*ep && steps > 0 && steps <= INT_MAX) {
                 deadman_max_steps = steps;
             } else {
                 tftpd_log(LOG_ERR, "Bad --map-steps option: %s", optarg);

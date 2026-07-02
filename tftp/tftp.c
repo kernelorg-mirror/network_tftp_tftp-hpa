@@ -45,8 +45,18 @@ extern int verbose;
 extern int rexmtval;
 extern int maxtimeout;
 
-#define PKTSIZE    SEGSIZE+4
-char ackbuf[PKTSIZE];
+/*
+ * Size of the client's own request-encoding buffer (ackbuf). This is
+ * intentionally named differently from the identically-purposed
+ * PKTSIZE macro in common/tftpsubs.c and tftpd/tftpd.c, which is
+ * MAX_SEGSIZE+4: this client never negotiates a larger block size, so
+ * ackbuf only ever needs to hold a request or a single default-sized
+ * DATA/ACK/ERROR packet. Do not reuse this name to size buffers that
+ * are meant to hold a full negotiated-size TFTP packet (see
+ * tftp_recvfile()'s use of MAX_SEGSIZE+4 below for that case).
+ */
+#define REQBUFSIZE SEGSIZE+4
+char ackbuf[REQBUFSIZE];
 int timeout;
 static sigjmp_buf timeoutbuf;
 
@@ -225,7 +235,7 @@ void tftp_recvfile(int fd, const char *name, const char *mode)
             alarm(rexmtval);
             do {
                 fromlen = sizeof(from);
-                n = recvfrom(f, dp, PKTSIZE, 0,
+                n = recvfrom(f, dp, MAX_SEGSIZE + 4, 0,
                              &from.sa, &fromlen);
             } while (n <= 0);
             alarm(0);

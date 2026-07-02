@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
+
 /*
  * This breaks down a path name into its constituents, removing
  * . and .. components.

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
+
 #ifndef LIB_GETOPT_H
 #define LIB_GETOPT_H
 

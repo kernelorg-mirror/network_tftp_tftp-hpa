@@ -25,7 +25,6 @@
 static bool is_valid_char(unsigned char c)
 {
     switch (c) {
-    case 127:
 #ifdef _WIN32
     case '<':
     case '>':
@@ -35,35 +34,126 @@ static bool is_valid_char(unsigned char c)
     case '|':
     case '?':
     case '*':
-#endif
         return false;
+#endif
     default:
         return c >= ' ';
     }
 }
 
 /*
- * Remove components as necessary, return the new tail pointer or NULL.
+ * Validate a filename (path component) for the platform, beyond what
+ * is_valid_char() does.
  */
-static const char **adjust_tail(const char **dp, const char **top)
+#ifndef _WIN32
+#define is_valid_filename(file) true
+#else
+/*
+ * This is Win32-specific code; assume _strnicmp() exists.
+ *
+ * Illegal on Windows: names ending in ' ', '.'
+ * One of 22 special names either standalone or followed by '.' + anything,
+ * case insensitive.
+ */
+static bool is_valid_filename(const char *file)
+{
+    const char *p;
+    bool last_ok = false;
+    char c;
+
+    p = file;
+    do {
+        c = *p;
+        switch (c) {
+        case '.':
+            last_ok = false;
+            /* fall through */
+        case '\0':
+            switch (p-file) {
+            case 3:
+                if (!_strnicmp(file, "aux", 3) ||
+                    !_strnicmp(file, "con", 3) ||
+                    !_strnicmp(file, "nul", 3) ||
+                    !_strnicmp(file, "prn", 3))
+                    return false;
+                break;
+            case 4:
+                if ((unsigned char)(p[-1] - '1') < 9) {
+                    if (!_strnicmp(file, "com", 3) ||
+                        !_strnicmp(file, "lpt", 3))
+                        return false;
+                }
+                break;
+            default:
+                break;
+            }
+            break;
+        case ' ':
+            last_ok = false;
+            break;
+        default:
+            last_ok = true;
+            break;
+        }
+        p++;
+    } while (c);
+
+    return last_ok;
+}
+#endif /* _WIN32 */
+
+/*
+ * Canonicalize a path by removing components (. and ..) and validate illegal
+ * filenames (currently only on Windows) beyond what is_valid_char()
+ * can do.
+ *
+ * If successful, return the number of entries dropped (in which case *dpp
+ * will have been adjusted accordingly), or return -1 if the filename
+ * is invalid or would ascend past the root.
+ */
+static int adjust_tail(const char ***dpp, const char **top)
 {
     size_t drop = 0;
-    const char *last_path = dp[-1];
+    const char **dp = *dpp;
+    const char *last;
 
-    if (last_path[0] == '.') {
-        if (!last_path[1]) {
+    /* These are sanity checks which should never trigger, but... */
+    if (!dp || dp < top)
+        return -1;
+    else if (dp == top)
+        return 0;
+
+    /* Get the last path component */
+    last = dp[-1];
+
+    if (!is_valid_filename(last))
+        return -1;
+
+    if (last[0] == '.') {
+        if (!last[1]) {
             /* . component */
             drop = 1;
-        } else if (last_path[1] == '.' && !last_path[2]) {
+        } else if (last[1] == '.' && !last[2]) {
             /* .. component */
             drop = 2;
         }
-    }
 
-    return (dp < top+drop) ? NULL : dp-drop;
+        if (dp < top+drop)
+            return -1;
+
+        *dpp -= drop;
+        return (int)drop;
+    } else {
+        return 0;
+    }
 }
 
-const char **parse_path(const char *path)
+/*
+ * Parse, validate and canonicalize a path. If "strict" is set,
+ * reject paths that contain . or .. components as well as paths
+ * without a leading slash.
+ */
+const char **parse_path(const char *path, bool strict)
 {
     bool was_slash;
     const char *p;
@@ -71,12 +161,9 @@ const char **parse_path(const char *path)
     char *q;
     size_t path_len;
     size_t ndirs;
+    int dropped;
 
-    /*
-     * For historical reasons, reject the path unless it explicitly
-     * beings with a slash.
-     */
-    if (*path != '/')
+    if (strict && *path != '/')
         return NULL;            /* Path not absolute */
 
     /*
@@ -105,8 +192,8 @@ const char **parse_path(const char *path)
         if (*q == '/') {
             *q = '\0';
             if (!was_slash) {
-                dp = adjust_tail(dp, dirs);
-                if (!dp)
+                dropped = adjust_tail(&dp, dirs);
+                if (dropped < 0 || (dropped && strict))
                     goto fail;
             }
             was_slash = true;
@@ -116,8 +203,8 @@ const char **parse_path(const char *path)
         }
     }
     if (!was_slash) {
-        dp = adjust_tail(dp, dirs);
-        if (!dp)
+        dropped = adjust_tail(&dp, dirs);
+        if (dropped < 0 || (dropped && strict))
             goto fail;
     }
 

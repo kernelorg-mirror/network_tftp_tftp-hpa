@@ -101,15 +101,22 @@ or
 options are specified.
 .TP
 \fB\-\-secure\fP, \fB\-s\fP
-Change root directory on startup.  This means the remote host does not
+Change root directory on startup using
+.BR chroot (2).  This means the remote host does not
 need to pass along the directory as part of the transfer, and may add
 security.  When
 .B \-\-secure
 is specified, exactly one
 .I directory
-should be specified on the command line.  The use of this option is
-recommended for security as well as compatibility with some boot ROMs
-which cannot be easily made to include a directory name in its request.
+should be specified on the command line.
+.IP
+Note that when
+.B \-\-secure
+is used, none of the path name checks
+described under
+.I "PATH VALIDATION"
+below are performed; any desired checks will have to be implemented
+using explicit remap rules.
 .TP
 \fB\-\-user\fP \fIusername\fP, \fB\-u\fP \fIusername\fP
 Specify the username which
@@ -438,20 +445,64 @@ flag.  It is probably a good idea to set up a specific user account for
 rather than letting it run as "nobody", to guard against privilege
 leaks between applications.
 .PP
-Access to files can, and should, be restricted by invoking
+Access to files is restricted by the list of directories passed to
 .B tftpd
-with a list of directories by including pathnames as server program
-arguments on the command line.  In this case access is restricted to
-files whose names are prefixed by one of the given directories.  If
-possible, it is recommended that the
+on the command line. Alternatively, the
 .B \-\-secure
-flag is used to set up a chroot() environment for the server to run in
-once a connection has been set up.
+flag is used to set up a
+.BR chroot (2)
+environment for the server to run in once a connection has been set up.
 .PP
-Finally, the filename remapping
+The filename mapping facility
 .RB ( \-\-map-file
-flag) support can be used to provide a limited amount of additional
-access control.
+flag) support can be used to provide fine-grained control of
+permissions as well handle nonstandard path names requested by
+clients, such as Windows clients expecting to be able to use
+.B \\
+as path separators.
+.SH "PATH VALIDATION"
+If the
+.B \-\-secure
+flag is
+.I not
+given on the command line,
+.B tftpd
+will perform the following validation and canonicalization of the final path
+name, before verifying that the path falls inside one of the
+directories specified on the command line (similarly canonicalized):
+.IP "1." \b(In
+The path name must begin with
+.RB \\[lq] / \\[rq].
+.IP "2." \b(In
+The path must not contain
+.RB \\[lq] . \\[rq]
+or
+.RB \\[lq] .. \\[rq]
+components.
+.IP "3." \b(In
+The path name must not contain ASCII control characters (0-31).
+.IP "4." \b(In
+Consecutive and terminal slashes are removed.
+.IP "5." \b(In
+On Windows platforms, the characters
+.B < > : \[dq] \\ | ? *
+that are invalid in filenames are prohibited. Only forward slashes
+.RB (\\[lq] / \\[rq])
+are permitted as a path separator. A path
+name component cannot end in a
+.RB \\[lq] . \\[rq]
+or space character, and each path name component is checked against the
+list of hard-coded Windows reserved filenames.
+.PP
+Validation and canonicalization are performed
+.I after
+filename remapping, if remapping is used.
+.PP
+When
+.B \-\-secure
+is used, no path validation is performed by
+.B tftpd
+itself.
 .SH "CONFORMING TO"
 RFC 1123,
 .IR "Requirements for Internet Hosts \- Application and Support" .
@@ -476,6 +527,7 @@ added patches by Markus Gutschke and Gero Kulhman.
 .SH "SEE ALSO"
 .MR tftp 1 ,
 .MR egrep 1 ,
+.MR chroot 2 ,
 .MR umask 2 ,
 .MR hosts_access 5 ,
 .MR regex 7 ,

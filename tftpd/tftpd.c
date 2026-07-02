@@ -587,7 +587,7 @@ int main(int argc, char **argv)
     patherr = false;
     for (ndirs = 0; optind != argc; optind++) {
         const char *path = argv[optind];
-        const char * const *pathlist = parse_path(path);
+        const char * const *pathlist = parse_path(path, !secure);
         if (!pathlist) {
             tftpd_log(LOG_ERR, "invalid path: %s", path);
             patherr = true;
@@ -1594,7 +1594,7 @@ static int validate_access(char *filename, int mode,
     *errmsg = NULL;
 
     if (!secure) {
-        const char **pathlist = parse_path(filename);
+        const char **pathlist = parse_path(filename, true);
 
         if (!pathlist) {
             *errmsg = "Invalid pathname specified";

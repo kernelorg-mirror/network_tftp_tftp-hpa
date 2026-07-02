@@ -436,7 +436,7 @@ The filename mapping facility
 flag) support can be used to provide fine-grained control of
 permissions as well handle nonstandard path names requested by
 clients, such as Windows clients expecting to be able to use
-.B \\
+.B \(rs
 as path separators.
 .SH "PATH VALIDATION"
 If the
@@ -448,22 +448,22 @@ given on the command line,
 will perform the following validation and canonicalization of the final path
 name, before verifying that the path falls inside one of the
 directories specified on the command line (similarly canonicalized):
-.IP "1." \b(In
+.IP "1." 4n
 The path name must begin with
 .RB \\[lq] / \\[rq].
-.IP "2." \b(In
+.IP "2." 4n
 The path must not contain
 .RB \\[lq] . \\[rq]
 or
 .RB \\[lq] .. \\[rq]
 components.
-.IP "3." \b(In
+.IP "3." 4n
 The path name must not contain ASCII control characters (0-31).
-.IP "4." \b(In
+.IP "4." 4n
 Consecutive and terminal slashes are removed.
-.IP "5." \b(In
+.IP "5." 4n
 On Windows platforms, the characters
-.B < > : \[dq] \\ | ? *
+.B < > : \[dq] \(rs | ? *
 that are invalid in filenames are prohibited. Only forward slashes
 .RB (\\[lq] / \\[rq])
 are permitted as a path separator. A path

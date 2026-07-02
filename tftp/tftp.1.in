@@ -64,7 +64,7 @@ exit gracefully.
 Once
 .B tftp
 is running, it issues the prompt
-\f(CWtftp>\fP
+\fBtftp>\fP
 and recognizes the following commands:
 .TP
 \fB?\fP \fIcommand-name...\fP

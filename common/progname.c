@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: BSD-3-Clause */
+/*
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Copyright (c) 2026 Intel Corporation; Author: H. Peter Anvin
+ */
 
 #include "config.h"
 #include "tftpsubs.h"

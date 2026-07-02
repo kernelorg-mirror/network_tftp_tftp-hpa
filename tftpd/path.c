@@ -1,4 +1,8 @@
-/* SPDX-License-Identifier: BSD-3-Clause */
+/*
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Copyright (c) 2026 Intel Corporation; Author: H. Peter Anvin
+ */
 
 /*
  * This breaks down a path name into its constituents, removing

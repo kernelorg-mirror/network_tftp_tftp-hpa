@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 1999-2006 H. Peter Anvin
+# Copyright (c) 2024 Intel Corporation; Author: H. Peter Anvin
 
 # You can do "make SUB=blah" to make only a few, or edit here, or both
 # You can also run make directly in the subdirs you want.

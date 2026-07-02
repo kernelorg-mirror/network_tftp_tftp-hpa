@@ -1,4 +1,9 @@
-/* SPDX-License-Identifier: BSD-3-Clause */
+/*
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
+ * Copyright (c) 2008 H. Peter Anvin
+ * Copyright (c) 2026 Intel Corporation; Author: H. Peter Anvin
+ */
 
 /*
  * getopt_long.c

@@ -1,6 +1,8 @@
 #!/bin/sh -xe
 # SPDX-License-Identifier: BSD-3-Clause
-# 
+#
+# Copyright (c) 2001-2008 H. Peter Anvin
+#
 # Script for generating a release
 #
 

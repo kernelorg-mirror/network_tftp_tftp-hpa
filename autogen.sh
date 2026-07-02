@@ -1,6 +1,8 @@
 #!/bin/sh -x
 # SPDX-License-Identifier: BSD-3-Clause
 #
+# Copyright (c) 2009-2024 Intel Corporation; Author: H. Peter Anvin
+#
 # Run this script to regenerate autoconf files
 #
 recheck=false

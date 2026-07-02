@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2006 H. Peter Anvin
+# Copyright (c) 2024-2026 Intel Corporation; Author: H. Peter Anvin
 
 SRCROOT = ..
 VERSION = $(shell cat ../version)

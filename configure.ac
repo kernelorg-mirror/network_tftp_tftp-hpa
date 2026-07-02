@@ -1,4 +1,9 @@
 dnl SPDX-License-Identifier: BSD-3-Clause
+dnl
+dnl Copyright (c) 1999-2008 H. Peter Anvin
+dnl Copyright (c) 2008 Karsten Keil
+dnl Copyright (c) 2011-2026 Intel Corporation; Author: H. Peter Anvin
+dnl
 dnl Process this file with autoconf 2.71 or later to produce
 dnl a configure script.
 AC_PREREQ([2.71])

@@ -1470,7 +1470,7 @@ static size_t rewrite_macros(char macro, char **output)
             *p++ = hexchar(c >> 4);
             *p++ = hexchar(c & 15);
         }
-        return bytes << 1;
+        return (size_t)(p - obuf);
     }
 
     default:

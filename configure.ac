@@ -72,6 +72,7 @@ AC_CHECK_HEADERS_ONCE(sys/filio.h)
 AC_CHECK_HEADERS_ONCE(sys/stat.h)
 AC_CHECK_HEADERS_ONCE(sys/time.h)
 AC_CHECK_HEADERS_ONCE(locale.h)
+AC_CHECK_HEADERS_ONCE(stdnoreturn.h)
 PA_CHECK_INTTYPES_H_SANE
 
 dnl This is needed on some versions of FreeBSD...

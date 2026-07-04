@@ -17,6 +17,45 @@ Changes in 5.4:
 
 	Add --enable-werror configure option.
 
+	Fix several security-relevant bugs in path validation
+	(tftpd/path.c): an uninitialized buffer read and a broken
+	path tokenizer could let a crafted or unlucky request bypass
+	path restrictions or crash the daemon.
+
+	Fix buffer overflows in the tftp client: an unbounded strcpy()
+	when building requests, an out-of-bounds write when putting
+	multiple files to a remote directory, and an unbounded write
+	into the interactive command-line argument array.
+
+	Fix an out-of-bounds read while scanning request fields in
+	tftpd, and an incorrect address family used when creating the
+	per-transfer socket on platforms without recvmsg().
+
+	Fix the --map-steps option, which rejected all valid numeric
+	arguments due to an inverted validity check.
+
+	Fix the \x remap macro returning the wrong substitution
+	length, which could corrupt or drop its expansion in remap
+	rules.
+
+	Fix synchnet() passing the wrong nfds argument to select(),
+	which silently disabled its protection against the Sorcerer's
+	Apprentice retransmit bug.
+
+	Fix tftpd failing to build/link on platforms lacking
+	recvmsg()/msghdr::msg_control support.
+
+	Fix several portability library bugs: a dup2() fallback with
+	incorrect semantics (removed as obsolete), a heap buffer
+	overflow and build failure in the getaddrinfo() fallback, a
+	build failure in the inet_ntop() fallback, a file descriptor
+	leak in daemon() on dup2() failure, and undefined pointer
+	arithmetic in getopt_long().
+
+	Add IPv6 support on MacOS X.
+
+	Fix groff formatting warnings in the tftp and tftpd man pages.
+
 
 Changes in 5.3:
 	Allow separate IPv4 and IPv6 remapping rules.

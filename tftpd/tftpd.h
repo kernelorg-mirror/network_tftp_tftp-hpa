@@ -22,10 +22,10 @@ typedef void (*log_func)(int, const char *, ...);
 extern log_func tftpd_log;
 
 void set_signal(int, void (*)(int), int);
-void *tfmalloc(size_t);
-char *tfstrdup(const char *);
-void *tfrealloc(void *, size_t);
-void tffree(void *);
+void *xmalloc(size_t);
+char *xstrdup(const char *);
+void *xrealloc(void *, size_t);
+void xfree(void *);
 
 extern int verbosity;
 

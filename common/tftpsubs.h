@@ -17,8 +17,12 @@
 extern const char *_progname;
 void set_progname(const char *); /* main() should pass argv[0] here */
 
+extern void (*out_of_memory)(void); /* Optional out of memory handler */
 void *xmalloc(size_t);
+void *xcalloc(size_t, size_t);
+void *xrealloc(void *, size_t);
 char *xstrdup(const char *);
+void xfree(void *);
 
 union sock_addr {
     struct sockaddr     sa;

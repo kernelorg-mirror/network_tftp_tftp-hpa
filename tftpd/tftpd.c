@@ -318,6 +318,12 @@ static int split_port(char **ap, char **pp)
     return ret;
 }
 
+static void tftpd_out_of_memory(void)
+{
+    tftpd_log(LOG_ERR, "fatal error: %m");
+    exit(EX_OSERR);
+}
+
 enum long_only_options {
     OPT_VERBOSITY	= 256,
     OPT_STDERR,
@@ -395,6 +401,7 @@ int main(int argc, char **argv)
 #endif
 
     set_progname(argv[0]);
+    out_of_memory = tftpd_out_of_memory;
 
     /* rand() is used for TFTP backoff; it doesn't have to be good */
     srand(time(NULL) ^ getpid());
@@ -644,7 +651,7 @@ int main(int argc, char **argv)
             struct servent *servent;
             unsigned long port;
 
-            address = tfstrdup(address);
+            address = xstrdup(address);
             err = split_port(&address, &portptr);
             switch (err) {
             case AF_INET:
@@ -1520,7 +1527,7 @@ static void rewrite_test(FILE *tf)
         if (out) {
             printf("%s\n", out);
             if (out != buf)
-                tffree(out);
+                xfree(out);
         } else {
             printf("ERROR: %s\n", msg);
         }

@@ -304,7 +304,7 @@ genmatchstring(char **string, const char *pattern,
         return len;
     }
 
-    *string = buf = tfmalloc(len + 1);
+    *string = buf = xmalloc(len + 1);
     return do_genmatchstring(buf, pattern, ibuf, pmatch,
                              macrosub, start, nextp);
 }
@@ -389,7 +389,7 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
         r->rule_flags = RULE_LABEL | RULE_NOREGEX;
         p++;
         if (*p) {
-            r->pattern = tfstrdup(p);
+            r->pattern = xstrdup(p);
             return 1;
         }
     }
@@ -469,7 +469,7 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
         }
 
         if ((rv = regcomp(&r->rx, buffer, rxflags)) != 0) {
-            char *errbuf = tfmalloc(BUFSIZ);
+            char *errbuf = xmalloc(BUFSIZ);
             regerror(rv, &r->rx, errbuf, BUFSIZ);
             tftpd_log(LOG_ERR, "regex: line %u: bad regex: %s",
                    lineno, errbuf);
@@ -479,9 +479,9 @@ static int parseline(char *line, struct rule *r, unsigned int lineno,
 
     /* Read the rewrite pattern, if any */
     if (readescstring(buffer, &line))
-        r->pattern = tfstrdup(buffer);
+        r->pattern = xstrdup(buffer);
     else
-        r->pattern = tfstrdup("");
+        r->pattern = xstrdup("");
 
     return 1;                   /* Valid rule found */
 }
@@ -517,7 +517,7 @@ static size_t read_line(FILE *f, char **bufp, size_t *bufsizep)
         else
             bufsize <<= 1;
         *bufsizep = bufsize;
-        *bufp = buf = tfrealloc(buf, bufsize);
+        *bufp = buf = xrealloc(buf, bufsize);
     }
 }
 
@@ -530,7 +530,7 @@ struct rule *parserulefile(FILE * f)
     size_t parsebufsize = 0;
     struct rule *first_rule = NULL;
     struct rule **last_rule = &first_rule;
-    struct rule *this_rule = tfmalloc(sizeof(struct rule));
+    struct rule *this_rule = xmalloc(sizeof(struct rule));
     int rv;
     unsigned int lineno = 0;
     size_t len;
@@ -539,20 +539,20 @@ struct rule *parserulefile(FILE * f)
     while ((len = read_line(f, &line, &linesize)) != (size_t)-1) {
         lineno++;
         if (parsebufsize < linesize)
-            parsebuf = tfrealloc(parsebuf, parsebufsize = linesize);
+            parsebuf = xrealloc(parsebuf, parsebufsize = linesize);
         rv = parseline(line, this_rule, lineno, parsebuf);
         if (rv < 0)
             err = 1;
         if (rv > 0) {
             *last_rule = this_rule;
             last_rule = &this_rule->next;
-            this_rule = tfmalloc(sizeof(struct rule));
+            this_rule = xmalloc(sizeof(struct rule));
         }
     }
 
-    tffree(this_rule);          /* Last one is always unused */
-    tffree(parsebuf);
-    tffree(line);               /* Free buffer */
+    xfree(this_rule);          /* Last one is always unused */
+    xfree(parsebuf);
+    xfree(line);               /* Free buffer */
 
     if (err) {
         /* Bail on error, we have already logged an error message */
@@ -573,8 +573,8 @@ void freerules(struct rule *r)
         if (RULE_HAS_REGEX(r->rule_flags))
             regfree(&r->rx);
 
-        tffree((void *)r->pattern);
-        tffree(r);
+        xfree((void *)r->pattern);
+        xfree(r);
 
         r = next;
     }
@@ -593,7 +593,7 @@ char *rewrite_string(const struct formats *pf,
                      int mode, int af, match_pattern_callback macrosub,
                      const char **errmsg)
 {
-    char *current = tfstrdup(input);
+    char *current = xstrdup(input);
     char *newstr = current;
     const char *accerr;
     const struct rule *ruleptr = rules;
@@ -664,7 +664,7 @@ char *rewrite_string(const struct formats *pf,
                                      pmatch, macrosub, ggoffset, &ggoffset);
 
                 if (len == (size_t)-1) {
-                    tffree(newstr);
+                    xfree(newstr);
                     return NULL;
                 }
 
@@ -677,7 +677,7 @@ char *rewrite_string(const struct formats *pf,
                 }
 
                 if (newstr != current)
-                    tffree(newstr);
+                    xfree(newstr);
                 newstr = newerstr;
 
                 if (!(ruleptr->rule_flags & RULE_GLOBAL))
@@ -706,11 +706,11 @@ char *rewrite_string(const struct formats *pf,
             }
             was_match = 0;
             if (newstr != current) {
-                tffree(newstr);
+                xfree(newstr);
                 newstr = current;
             }
         } else if (newstr != current) {
-            tffree(current);
+            xfree(current);
             current = newstr;
             if (verbosity >= 3) {
                 tftpd_log(LOG_INFO, "remap: line %u: rewrite result: %s",
@@ -726,7 +726,7 @@ char *rewrite_string(const struct formats *pf,
             if ((ssize_t)genmatchstring(&newstr, ruleptr->pattern, current,
                                         pmatch, macrosub, MATCHONLY, NULL)
                 <= 0) {
-                tffree(newstr);
+                xfree(newstr);
                 newstr = NULL;
             }
         }
@@ -798,7 +798,7 @@ dead:                           /* Deadman expired */
            deadman_max_steps, input, newstr);
 quit:
     if (newstr != current)
-        tffree(newstr);
-    tffree(current);
+        xfree(newstr);
+    xfree(current);
     return NULL;        /* Did not terminate! */
 }

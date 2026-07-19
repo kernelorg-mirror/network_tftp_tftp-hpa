@@ -273,8 +273,13 @@ int pick_port_bind(int sockfd, union sock_addr *myaddr,
     return -1;
 }
 
-int
-set_sock_addr(char *host,union sock_addr  *s, char **name)
+/*
+ * Extract a sock_addr for a specific host. If "early" is set, this is
+ * a socket intended to be bound as a standalone listening socket, and
+ * should be bound to a specified address even if it is not yet configured
+ * (e.g. due to network initialization delays.)
+ */
+int set_sock_addr(char *host, union sock_addr *s, char **name, bool early)
 {
     struct addrinfo *addrResult;
     struct addrinfo hints;
@@ -282,7 +287,8 @@ set_sock_addr(char *host,union sock_addr  *s, char **name)
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = s->sa.sa_family;
-    hints.ai_flags = AI_CANONNAME | AI_ADDRCONFIG;
+    hints.ai_flags = AI_CANONNAME;
+    hints.ai_flags |= early ? AI_PASSIVE : AI_ADDRCONFIG;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_protocol = IPPROTO_UDP;
     err = getaddrinfo(strip_address(host), NULL, &hints, &addrResult);

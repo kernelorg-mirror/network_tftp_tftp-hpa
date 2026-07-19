@@ -694,8 +694,8 @@ int main(int argc, char **argv)
             if (*address) {
                 if (fd4 >= 0) {
                     bindaddr4.sin_family = AF_INET;
-                    err = set_sock_addr(address,
-                                        (union sock_addr *)&bindaddr4, NULL);
+                    err = set_sock_addr(address, (union sock_addr *)&bindaddr4,
+                                        NULL, true);
                     if (err) {
                         tftpd_log(LOG_ERR,
                                "cannot resolve local IPv4 bind address: %s, %s",
@@ -706,8 +706,8 @@ int main(int argc, char **argv)
 #ifdef HAVE_IPV6
                 if (fd6 >= 0) {
                     bindaddr6.sin6_family = AF_INET6;
-                    err = set_sock_addr(address,
-                                        (union sock_addr *)&bindaddr6, NULL);
+                    err = set_sock_addr(address, (union sock_addr *)&bindaddr6,
+                                        NULL, true);
                     if (err) {
                         if (fd4 >= 0) {
                             tftpd_log(LOG_ERR,

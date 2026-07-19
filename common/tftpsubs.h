@@ -83,7 +83,7 @@ static inline int sa_set_port(union sock_addr *s, u_short port)
        return 0;
 }
 
-int set_sock_addr(char *, union sock_addr *, char **);
+int set_sock_addr(char *, union sock_addr *, char **, bool);
 
 struct tftphdr;
 

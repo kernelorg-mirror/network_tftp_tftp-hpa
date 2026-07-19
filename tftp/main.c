@@ -387,7 +387,7 @@ void setpeer(int argc, char *argv[])
     }
 
     peeraddr.sa.sa_family = ai_fam;
-    err = set_sock_addr(argv[1], &peeraddr, &hostname);
+    err = set_sock_addr(argv[1], &peeraddr, &hostname, false);
     if (err) {
         printf("Error: %s\n", gai_strerror(err));
         printf("%s: unknown host\n", argv[1]);
@@ -530,7 +530,7 @@ void put(int argc, char *argv[])
         targ = strchr(cp, ':');
         *targ++ = 0;
         peeraddr.sa.sa_family = ai_fam;
-        err = set_sock_addr(cp, &peeraddr,&hostname);
+        err = set_sock_addr(cp, &peeraddr, &hostname, false);
         if (err) {
             printf("Error: %s\n", gai_strerror(err));
             printf("%s: unknown host\n", argv[1]);
@@ -624,7 +624,7 @@ void get(int argc, char *argv[])
 
             *src++ = 0;
             peeraddr.sa.sa_family = ai_fam;
-            err = set_sock_addr(argv[n], &peeraddr, &hostname);
+            err = set_sock_addr(argv[n], &peeraddr, &hostname, false);
             if (err) {
                 printf("Warning: %s\n", gai_strerror(err));
                 printf("%s: unknown host\n", argv[1]);

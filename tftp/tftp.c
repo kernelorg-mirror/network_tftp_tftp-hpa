@@ -53,18 +53,25 @@ static void tpacket(const char *, const struct tftphdr *, int);
 struct client_xfer_context {
     union sock_addr from;
     unsigned long timeout;
+    bool fast_timeout;
+    bool fast_retry_used;
 };
 
 static int client_recv_time(void *packet, int length, union sock_addr *from,
-                            unsigned long *timeout_us_p)
+                            unsigned long *timeout_us_p, bool *fast_timeout)
 {
     socklen_t fromlen = sizeof(*from);
     int n;
 
     n = tftp_recv_time(f, packet, length, 0, &from->sa, &fromlen,
                        timeout_us_p);
-    if (n < 0 && errno == ETIMEDOUT)
+    if (n < 0 && errno == ETIMEDOUT) {
+        if (fast_timeout && *fast_timeout) {
+            *fast_timeout = false;
+            siglongjmp(*active_timeoutbuf, 1);
+        }
         timer(0);               /* Should not return */
+    }
     if (n >= 0)
         sa_set_port(&peeraddr, SOCKPORT(from));
     return n;
@@ -83,7 +90,8 @@ static int client_xfer_recv(void *vctx, void *packet, int length)
 {
     struct client_xfer_context *ctx = vctx;
 
-    return client_recv_time(packet, length, &ctx->from, &ctx->timeout);
+    return client_recv_time(packet, length, &ctx->from, &ctx->timeout,
+                            &ctx->fast_timeout);
 }
 
 static void client_xfer_received(void *vctx, const struct tftphdr *packet,
@@ -97,10 +105,16 @@ static void client_xfer_received(void *vctx, const struct tftphdr *packet,
 static void client_xfer_retry_enter(void *vctx, sigjmp_buf *retrybuf,
                                     bool restarted)
 {
-    (void)vctx;
+    struct client_xfer_context *ctx = vctx;
+
     active_timeoutbuf = retrybuf;
-    if (!restarted)
+    if (!restarted) {
         timeout = (unsigned long)rexmtval * USEC_PER_SEC;
+        ctx->fast_retry_used = false;
+    } else {
+        ctx->fast_retry_used = true;
+    }
+    ctx->fast_timeout = false;
 }
 
 static void client_xfer_retry_leave(void *vctx)
@@ -109,11 +123,22 @@ static void client_xfer_retry_leave(void *vctx)
     active_timeoutbuf = &timeoutbuf;
 }
 
-static void client_xfer_wait_begin(void *vctx)
+static void client_xfer_wait_begin(void *vctx, unsigned long round_trip_time,
+                                   unsigned long default_timeout)
 {
     struct client_xfer_context *ctx = vctx;
+    unsigned long fast_timeout;
 
     ctx->timeout = timeout;
+    ctx->fast_timeout = false;
+    if (!ctx->fast_retry_used) {
+        fast_timeout = tftp_fast_ack_timeout(round_trip_time,
+                                             default_timeout);
+        if (fast_timeout) {
+            ctx->timeout = fast_timeout;
+            ctx->fast_timeout = true;
+        }
+    }
 }
 
 static const struct tftp_xfer_ops client_xfer_ops = {
@@ -175,7 +200,8 @@ void tftp_sendfile(int fd, const char *name, const char *mode,
         }
         r_timeout = timeout;
       wait_for_reply:
-        n = client_recv_time(response, sizeof(response), &from, &r_timeout);
+        n = client_recv_time(response, sizeof(response), &from, &r_timeout,
+                             NULL);
         if (n < 0) {
             perror("tftp: recvfrom");
             goto abort;
@@ -218,6 +244,7 @@ void tftp_sendfile(int fd, const char *name, const char *mode,
 
     xfer.blocksize = segsize;
     xfer.windowsize = window;
+    xfer.default_timeout = (unsigned long)rexmtval * USEC_PER_SEC;
     xfer.rollover = 0;
     xfer.resend_oack = requested_window != 0;
     xfer.control = ackbuf;
@@ -311,7 +338,7 @@ void tftp_recvfile(int fd, const char *name, const char *mode,
         r_timeout = timeout;
       wait_for_reply:
         n = client_recv_time(initial_packet, TFTP_XFER_MAX_PACKET_SIZE,
-                             &from, &r_timeout);
+                             &from, &r_timeout, NULL);
         if (n < 0) {
             perror("tftp: recvfrom");
             goto abort;
@@ -360,6 +387,7 @@ void tftp_recvfile(int fd, const char *name, const char *mode,
 
     xfer.blocksize = segsize;
     xfer.windowsize = window;
+    xfer.default_timeout = (unsigned long)rexmtval * USEC_PER_SEC;
     xfer.rollover = 0;
     xfer.resend_oack = false;
     xfer.control = ackbuf;
